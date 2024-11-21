@@ -22,10 +22,6 @@ like C++ and Shell scripts.
     - pandas
     - matplotlib
     - plotly
-    - kaleido == 0.1.0.post1
-    - pyvisa
-    - pymeasure >= 0.14.0
-    - qcodes >= 0.47.0
-- Optional packages:
     - jupyter
+- Optional packages:
     - PyQt6
