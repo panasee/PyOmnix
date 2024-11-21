@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "PyDaily"
+version = "0.1a1"
+description = "Integrated Tools for Daily Usage"
+authors = [{name="Dongkai", email="dongkai001@e.ntu.edu.sg"}]
+readme = "README.md"
+license = {text = "MIT License"}
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Programming Language :: Python",
+    "intended Audience :: Developers"
+]
+dependencies = [
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "plotly>=5.24.1",
+    "jupyter"
+]
+
+[project.optional-dependencies]
+gui = ["PyQt6"]
+
+[project.scripts]
