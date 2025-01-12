@@ -1,6 +1,8 @@
 import importlib
 import copy
 import json
+import re
+import os
 import threading
 import time
 import sys
@@ -18,7 +20,9 @@ import numpy as np
 import pandas as pd
 
 from DaySpark.utils import cm_to_inch, factor, default_plot_dict, is_notebook, hex_to_rgb
+from DaySpark.logger import setup_logger
 
+logger = setup_logger()
 
 class DataPlot():
     """
@@ -334,8 +338,8 @@ class DataPlot():
 
             # Run Dash server in a separate thread
             def run_dash():
-                print(f"\nStarting real-time plot server...")
-                print(f"View the plot at: http://localhost:{port}")
+                logger.info(f"\nStarting real-time plot server...")
+                logger.info(f"View the plot at: http://localhost:{port}")
                 # Open the browser automatically
                 webbrowser.open(f'http://localhost:{port}')
                 # Run the server
@@ -382,7 +386,7 @@ class DataPlot():
                          y_data: Sequence[float | str] | Sequence[Sequence[float | str]] | np.ndarray[float | str],
                          z_data: Sequence[float | str] | Sequence[Sequence[float | str]] | np.ndarray[float | str] = (
                          0,), *,
-                         incremental=False, max_points: int = None, with_str: bool = False) -> None:
+                         incremental=False, max_points: Optional[int] = None, with_str: bool = False) -> None:
         """
         update the live data in jupyter, the row, col, lineno all can be tuples to update multiple subplots at the
         same time. Note that this function is not appending datapoints, but replot the whole line, so provide the
@@ -406,7 +410,7 @@ class DataPlot():
                    the string data will just be plotted evenly spaced
         """
         if not incremental and max_points is not None:
-            print("max_points will be ignored when incremental is False")
+            logger.warning("max_points will be ignored when incremental is False")
 
         def ensure_list(data, target_type: type = np.float32) -> np.ndarray:
             def try_type(x):
@@ -469,14 +473,15 @@ class DataPlot():
                         trace.y = np.append(trace.y, y_data[no])
                         trace.z = np.append(trace.z, z_data[idx_z])
                     idx_z += 1
-            assert idx_z == len(z_data) or (idx_z == 0 and z_data == (0,)), \
-                "z_data should have the same length as the number of contour plots"
+            if not idx_z == len(z_data) or (idx_z == 0 and z_data == (0,)):
+                logger.error("z_data should have the same length as the number of contour plots")
+                raise ValueError("z_data should have the same length as the number of contour plots")
         if not is_notebook() and not incremental:
             self.go_f.update_layout(uirevision=True)
             time.sleep(0.5)
 
     @staticmethod
-    def sel_pan_color(row: Optional[int] = None, col: Optional[int] = None, data_extract: bool = False, external_repo: Optional[str | Path] = None) \
+    def sel_pan_color(row: Optional[int] = None, col: Optional[int] = None, data_extract: bool = False, external_file: Optional[str | Path] = None) \
             -> Optional[tuple[tuple[float | int, ...], str]] | tuple[list[list[tuple[float | int, ...]]], dict]:
         """
         select the color according to the position in pan_colors method (use row and col as in 2D array)
@@ -487,13 +492,23 @@ class DataPlot():
         - row: the row of the color selected
         - col: the column of the color selected
         - data_extract: used internally to get color data without plotting
-        - external_repo: the external repository to load the color data from
+        - external_file: the external file to load the color data from
         """
-        if external_repo is None:
-            with resources.open_text("DaySpark.pltconfig", "pan_color.json") as f:
-                color_dict = json.load(f)
+        if external_file is None:
+            localenv_filter = re.compile(r"^PYLAB_DB_LOCAL")
+            filtered_vars = {
+                key: value for key, value in os.environ.items() if localenv_filter.match(key)
+            }
+            used_var = list(filtered_vars.keys())[0]
+            if filtered_vars:
+                filepath = Path(filtered_vars[used_var]) / "pan-colors.json"
+                logger.info(f"load path from ENVIRON: {used_var}")
+                return DataPlot.sel_pan_color(row, col, data_extract, filepath)
+            else:
+                with resources.open_text("DaySpark.pltconfig", "pan_color.json") as f:
+                    color_dict = json.load(f)
         else:
-            with open(external_repo / "pan_color.json", encoding='utf-8') as f:
+            with open(external_file, encoding='utf-8') as f:
                 color_dict = json.load(f)
         full_rgbs = list(map(hex_to_rgb, color_dict["values"]))
         rgbs = full_rgbs[:2304]
@@ -514,7 +529,7 @@ class DataPlot():
             elif row is not None and col is not None:
                 return rgb_mat[row][col], color_dict["names"][row * 48 + col]
             else:
-                print("x and y should be both None or both not None")
+                logger.error("x and y should be both None or both not None")
         else:
             return rgb_mat, color_dict
 
@@ -531,7 +546,7 @@ class DataPlot():
             from PyQt6.QtGui import QColor, QBrush
             from PyQt6.QtCore import Qt, pyqtSignal
         except ImportError:
-            print("PyQt6 is not installed")
+            logger.error("PyQt6 is not installed")
             return
 
         def rgb_float_to_int(rgb_tuple):
@@ -629,9 +644,9 @@ class DataPlot():
             elif isinstance(color_lst[0][0][0], float | int):
                 ax.imshow(color_lst)
             else:
-                print("wrong format")
+                logger.error("wrong format")
                 return
         except Exception:
-            print("wrong format")
+            logger.error("wrong format")
             return
         plt.show()
