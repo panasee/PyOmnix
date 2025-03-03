@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+"""This module is responsible for processing and plotting the data"""
+
 import importlib
 import copy
 import json
@@ -6,7 +9,7 @@ import os
 import threading
 import time
 import sys
-from typing import Sequence
+from collections.abc import Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Optional, Literal
@@ -117,12 +120,31 @@ class DataPlot():
         """
         self.plot_types: list[list[str]] = []
         DataPlot.load_settings(usetex, usepgf)
+        self.unit = {"I": "A", "V": "V", "R": "Ohm", "T": "K", "B": "T", "f": "Hz"}
         # params here are mainly used for internal methods
         self.params = DataPlot.PlotParam(no_params)
         self.live_dfs: list[list[list[go.Scatter]]] = []
         self.go_f: Optional[go.FigureWidget] = None
         self._stop_event = threading.Event()
         self._thread = None
+
+    def unit_factor(self, axis_name: str) -> float:
+        """
+        Used in plotting, to get the factor of the unit
+
+        Args:
+        - axis_name: the unit name string (like: uA)
+        """
+        return self.get_unit_factor_and_texname(self.unit[axis_name])[0]
+
+    def unit_name(self, axis_name: str) -> str:
+        """
+        Used in plotting, to get the TeX name of the unit
+
+        Args:
+        - axis_name: the unit name string (like: uA)
+        """
+        return self.get_unit_factor_and_texname(self.unit[axis_name])[1]
 
     @staticmethod
     def get_unit_factor_and_texname(unit: str) -> tuple[float, str]:
@@ -134,10 +156,19 @@ class DataPlot():
         """
         _factor = factor(unit)
         if unit[0] == "u":
-            namestr = rf"$\mathrm{{\mu {unit[1:]}}}$".replace("Ohm", r"\Omega").replace("Omega", r"\Omega")
+            namestr = rf"$\mathrm{{\mu {unit[1:]}}}$".replace("Omega", r"\Omega").replace("Ohm", r"\Omega")
         else:
-            namestr = rf"$\mathrm{{{unit}}}$".replace("Ohm", r"\Omega").replace("Omega", r"\Omega")
+            namestr = rf"$\mathrm{{{unit}}}$".replace("Omega", r"\Omega").replace("Ohm", r"\Omega")
         return _factor, namestr
+
+    def set_unit(self, unit_new: dict = None) -> None:
+        """
+        Set the unit for the plot, default to SI
+
+        Args:
+        - unit_new: the unit dictionary, the format is {"I":"uA", "V":"V", "R":"Ohm"}
+        """
+        self.unit.update(unit_new)
 
     def plot_df_cols(self, data_df: pd.DataFrame) -> Optional[tuple[Figure, Axes]]:
         """
@@ -154,7 +185,8 @@ class DataPlot():
         return fig, ax
 
     @staticmethod
-    def plot_mapping(data_df: pd.DataFrame, mapping_x: any, mapping_y: any, mapping_val: any, *, fig: Figure = None, ax: Axes = None, cmap: str = "viridis") -> tuple[Figure, Axes]:
+    def plot_mapping(data_df: pd.DataFrame, mapping_x: any, mapping_y: any, mapping_val: any, *,
+                     fig: Figure = None, ax: Axes = None, cmap: str = "viridis") -> tuple[Figure, Axes]:
         """
         plot the mapping of the data
 
@@ -178,7 +210,7 @@ class DataPlot():
     @staticmethod
     def load_settings(usetex: bool = False, usepgf: bool = False) -> None:
         """load the settings for matplotlib saved in another file"""
-        file_name = "DaySpark.pltconfig.plot_config"
+        file_name = "PyOmnix.pltconfig.plot_config"
         if usetex:
             file_name += "_tex"
             if usepgf:
@@ -310,6 +342,7 @@ class DataPlot():
             import dash
             from dash import html, dcc
             from dash.dependencies import Input, Output
+            import threading
             import webbrowser
 
             port = 11235
@@ -338,7 +371,7 @@ class DataPlot():
 
             # Run Dash server in a separate thread
             def run_dash():
-                logger.info(f"\nStarting real-time plot server...")
+                logger.info("\nStarting real-time plot server...")
                 logger.info(f"View the plot at: http://localhost:{port}")
                 # Open the browser automatically
                 webbrowser.open(f'http://localhost:{port}')
@@ -426,7 +459,7 @@ class DataPlot():
         def ensure_2d_array(data, if_with_str=False) -> np.ndarray:
             data_arr = ensure_list(data)
             if data_arr.size == 0:
-                return np.array([[]])
+                return data_arr
             if not isinstance(data_arr[0], np.ndarray):
                 if if_with_str:
                     return np.array([data_arr])
@@ -473,9 +506,8 @@ class DataPlot():
                         trace.y = np.append(trace.y, y_data[no])
                         trace.z = np.append(trace.z, z_data[idx_z])
                     idx_z += 1
-            if not idx_z == len(z_data) or (idx_z == 0 and z_data == (0,)):
-                logger.error("z_data should have the same length as the number of contour plots")
-                raise ValueError("z_data should have the same length as the number of contour plots")
+            assert idx_z == len(z_data) or (idx_z == 0 and z_data == (0,)), \
+                "z_data should have the same length as the number of contour plots"
         if not is_notebook() and not incremental:
             self.go_f.update_layout(uirevision=True)
             time.sleep(0.5)
