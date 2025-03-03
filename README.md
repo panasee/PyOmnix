@@ -15,48 +15,29 @@ like C++ and Shell scripts.
 - [Roadmap](#roadmap)
 - [Dependencies](#dependencies)
 - [Project Structure](#project-structure)
-- [Contributing](#contributing)
 - [License](#license)
-- [Contact](#contact)
 
 ## Overview
 
-PyOmnix is a versatile toolkit that combines various utilities for daily programming tasks and entertainment. It aims to simplify common operations and provide interesting tools for both practical use and fun exploration.
+TODO
 
 ## Installation
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/PyOmnix.git
-cd PyOmnix
-
-# Install the package
-pip install -e .
-```
+TODO
 
 ## Usage
 
-```python
-# Basic usage example
-import pyomnix
-```
-
-For more detailed examples, see the [examples](examples/) directory.
+TODO
 
 ## Features
 
-- **Image Processing**: Simple tools for image manipulation
-- **Statistical Tools**: Utilities for data analysis and visualization
-- **Daily Utilities**: Helpful functions for everyday programming tasks
-- **Entertainment**: Fun tools and games
+TODO
 
 ## Roadmap
-- Simple image processing (could utilize Shell tools)
-- Some fun facts about statistics
-- Add support for batch processing of files
-- Implement interactive data visualization tools
-- Create CLI interface for common operations
-- Add machine learning utilities
+- Integrated tools for other packages (logger and workflow manager)
+- Image analyzing & processing
+- Data processing & visulization
+- Machine learning utilities
 
 ## Dependencies
 - python >= 3.11 (earlier version is not tested)
@@ -86,22 +67,6 @@ PyOmnix/
 └── README.md             # This file
 ```
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Contact
-
-Your Name - [@your_twitter](https://twitter.com/your_twitter) - email@example.com
-
-Project Link: [https://github.com/yourusername/PyOmnix](https://github.com/yourusername/PyDaily)
