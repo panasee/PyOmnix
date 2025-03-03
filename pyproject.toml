@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "DaySpark"
+name = "PyOmnix"
 version = "0.1a1"
 description = "Integrated Tools for Daily Usage"
 authors = [{name="Dongkai", email="dongkai001@e.ntu.edu.sg"}]
@@ -32,7 +32,7 @@ dependencies = [
 gui = ["PyQt6"]
 
 [project.scripts]
-gui_pan_color = "DaySpark.data_plot:DataPlot.gui_pan_color"
+gui_pan_color = "PyOmnix.data_plot:DataPlot.gui_pan_color"
 
 [tool.setuptools]
 include-package-data = true

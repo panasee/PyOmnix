@@ -1,15 +1,54 @@
 import re
+import os
+from pathlib import Path
 import sys
 from datetime import datetime
 from functools import wraps
 from typing import Literal, Generator, Sequence, Optional
 from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 from matplotlib import colormaps
-
 import numpy as np
 import pandas as pd
-
 from .pltconfig import color_preset as colors
+
+OMNIX_PATH: Path | None = None
+
+def set_envs() -> None:
+    """
+    set the environment variables from related environment variables
+    for compatibility with another package pyflexlab, PYLAB_DB_LOCAL will also be recognized when there is no OMNIX_PATH
+    """
+    for env_var in ["OMNIX_PATH", "PYLAB_DB_LOCAL"]:
+        if env_var in os.environ:
+            return
+        
+        for key in os.environ:
+            if key.startswith(env_var):
+                os.environ[env_var] = os.environ[key]
+                print(f"set with {key}")
+                return
+               
+        print(f"{env_var} not found in environment variables")
+
+def set_paths(*, omnix_path: Path | str | None = None) -> Path | None:
+    """
+    two ways are provided to set the paths:
+    1. set the paths directly in the function (before other modules are imported)
+    2. set the paths in the environment variables OMNIX_PATH
+    """
+    if omnix_path is not None:
+        return Path(omnix_path)
+    else:
+        if os.getenv("OMNIX_PATH") is None:
+            if os.getenv("PYLAB_DB_LOCAL") is None:
+                print("OMNIX_PATH not set")
+                return
+            else:
+                print(f"read from PYLAB_DB_LOCAL:{os.getenv('PYLAB_DB_LOCAL')}")
+                return Path(os.getenv("PYLAB_DB_LOCAL"))
+        else:
+            print(f"read from OMNIX_PATH:{os.getenv('OMNIX_PATH')}")
+            return Path(os.getenv("OMNIX_PATH"))
 
 # define constants
 cm_to_inch = 0.3937
@@ -257,16 +296,16 @@ def timestr_convert(t: pd.Series | Sequence[str] | np.ndarray, format_str: str =
         the meaning of each character and optional characters is as follows:
         %H : Hour (24-hour clock) as a zero-padded decimal number. 00, 01, ..., 23
         %I : Hour (12-hour clock) as a zero-padded decimal number. 01, 02, ..., 12
-        %p : Locale’s equivalent of either AM or PM.
+        %p : Locale's equivalent of either AM or PM.
         %M : Minute as a zero-padded decimal number. 00, 01, ..., 59
         %S : Second as a zero-padded decimal number. 00, 01, ..., 59
         %f : Microsecond as a decimal number, zero-padded on the left. 000000, 000001, ..., 999999
-        %a : Weekday as locale’s abbreviated name.
-        %A : Weekday as locale’s full name.
+        %a : Weekday as locale's abbreviated name.
+        %A : Weekday as locale's full name.
         %w : Weekday as a decimal number, where 0 is Sunday and 6 is Saturday.
         %d : Day of the month as a zero-padded decimal number. 01, 02, ..., 31
-        %b : Month as locale’s abbreviated name.
-        %B : Month as locale’s full name.
+        %b : Month as locale's abbreviated name.
+        %B : Month as locale's full name.
         %m : Month as a zero-padded decimal number. 01, 02, ..., 12
         %y : Year without century as a zero-padded decimal number. 00, 01, ..., 99
         %Y : Year with century as a decimal number. 0001, 0002, ..., 2013, 2014, ..., 9998, 9999
