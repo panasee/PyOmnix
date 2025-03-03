@@ -9,7 +9,7 @@ from matplotlib import colormaps
 import numpy as np
 import pandas as pd
 
-import DaySpark.pltconfig.color_preset as colors
+from .pltconfig import color_preset as colors
 
 # define constants
 cm_to_inch = 0.3937

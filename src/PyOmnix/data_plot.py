@@ -6,7 +6,7 @@ import os
 import threading
 import time
 import sys
-from collections.abc import Sequence
+from typing import Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Optional, Literal
@@ -19,8 +19,8 @@ from plotly.subplots import make_subplots
 import numpy as np
 import pandas as pd
 
-from DaySpark.utils import cm_to_inch, factor, default_plot_dict, is_notebook, hex_to_rgb
-from DaySpark.logger import setup_logger
+from .utils import cm_to_inch, factor, default_plot_dict, is_notebook, hex_to_rgb
+from .logger import setup_logger
 
 logger = setup_logger()
 
@@ -178,7 +178,7 @@ class DataPlot():
     @staticmethod
     def load_settings(usetex: bool = False, usepgf: bool = False) -> None:
         """load the settings for matplotlib saved in another file"""
-        file_name = "pylab_dk.pltconfig.plot_config"
+        file_name = "DaySpark.pltconfig.plot_config"
         if usetex:
             file_name += "_tex"
             if usepgf:
