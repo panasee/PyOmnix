@@ -3,6 +3,7 @@
 
 from .utils import set_envs, set_paths
 from . import utils
+from . import flow
 
 set_envs()
 utils.OMNIX_PATH = set_paths()

@@ -25,11 +25,18 @@ dependencies = [
     "plotly",
     "kaleido==0.1.0.post1",
     "jupyter",
-    "dash"
+    "dash",
+    "apache-airflow>=2.7.0"
 ]
 
 [project.optional-dependencies]
 gui = ["PyQt6"]
+workflow = [
+    "apache-airflow-providers-http",
+    "apache-airflow-providers-sqlite",
+    "apache-airflow-providers-postgres",
+    "apache-airflow-providers-mysql"
+]
 
 [project.scripts]
 gui_pan_color = "PyOmnix.data_plot:DataPlot.gui_pan_color"
