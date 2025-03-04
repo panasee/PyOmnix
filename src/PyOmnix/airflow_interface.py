@@ -20,7 +20,7 @@ from airflow.models import TaskInstance
 from airflow.utils.context import Context
 
 # Import PyOmnix logger if available
-from .ominix_logger import setup_logger
+from .omnix_logger import setup_logger
 logger = setup_logger(__name__)
 
 class WorkflowManager:

@@ -4,7 +4,7 @@
 from .utils import set_envs, set_paths
 from . import utils
 
-from .ominix_logger import setup_logger, get_logger
+from .omnix_logger import setup_logger, get_logger
 # get_logger will return the logger instance if already exists
 # setup_logger will reset existing logger
 

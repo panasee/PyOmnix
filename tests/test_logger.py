@@ -15,7 +15,7 @@ import unittest
 from typing import List, Optional
 
 # Import the logger module
-from PyOmnix.ominix_logger import (
+from PyOmnix.omnix_logger import (
     LoggerConfig,
     setup_logger,
     get_logger,

@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 from .utils import cm_to_inch, factor, default_plot_dict, is_notebook, hex_to_rgb
-from .ominix_logger import get_logger
+from .omnix_logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -3,8 +3,8 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "PyOmnix"
-version = "0.1a1"
+name = "pyomnix"
+version = "0.1a2"
 description = "Integrated Tools for Daily Usage"
 authors = [{name="Dongkai", email="dongkai001@e.ntu.edu.sg"}]
 readme = "README.md"
