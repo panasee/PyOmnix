@@ -19,6 +19,7 @@ from PyOmnix.logger import (
     LoggerConfig,
     setup_logger,
     get_logger,
+    close_logger,
     ExceptionHandler,
     validate,
     custom_excepthook
@@ -36,9 +37,29 @@ class TestLogger(unittest.TestCase):
         
         # Store the original excepthook to restore it later
         self.original_excepthook = sys.excepthook
+        
+        # Store created loggers to clean them up later
+        self.test_loggers = []
+
+    def _close_all_handlers(self):
+        """Close all handlers for all loggers to prevent file lock issues"""
+        # First close handlers for loggers we explicitly created
+        for logger_name in self.test_loggers:
+            close_logger(logger_name)
+                
+        # Then check all loggers in the system
+        for name, logger in logging.Logger.manager.loggerDict.items():
+            if hasattr(logger, 'handlers'):
+                for handler in list(logger.handlers):
+                    if hasattr(handler, 'baseFilename') and str(self.log_file_path) in str(handler.baseFilename):
+                        handler.close()
+                        logger.removeHandler(handler)
 
     def tearDown(self):
         """Tear down test fixtures"""
+        # Close all file handlers to prevent file lock issues
+        self._close_all_handlers()
+        
         # Clean up temporary directory
         self.temp_dir.cleanup()
         
@@ -69,6 +90,9 @@ class TestLogger(unittest.TestCase):
             propagate=True
         )
         
+        # Add to our list of loggers to clean up
+        self.test_loggers.append(custom_name)
+        
         self.assertEqual(logger.name, custom_name)
         self.assertEqual(logger.level, custom_level)
         self.assertTrue(logger.propagate)
@@ -76,11 +100,15 @@ class TestLogger(unittest.TestCase):
 
     def test_trace_level(self):
         """Test the custom TRACE log level"""
+        logger_name = "TraceTest"
         logger = setup_logger(
-            name="TraceTest",
+            name=logger_name,
             log_level=LoggerConfig.TRACE,
             log_file=self.log_file_path
         )
+        
+        # Add to our list of loggers to clean up
+        self.test_loggers.append(logger_name)
         
         trace_message = "This is a trace message"
         logger.trace(trace_message)
@@ -143,6 +171,9 @@ class TestLogger(unittest.TestCase):
             log_file=self.log_file_path
         )
         
+        # Add to our list of loggers to clean up
+        self.test_loggers.append(logger_name)
+        
         error_message = "Validation failed"
         
         # This should raise an AssertionError
@@ -160,9 +191,14 @@ class TestLogger(unittest.TestCase):
     def test_custom_excepthook(self):
         """Test custom_excepthook function"""
         # Setup a logger with a file to capture the exception
+        logger_name = "ExcepthookTest"
         setup_logger(
+            name=logger_name,
             log_file=self.log_file_path
         )
+        
+        # Add to our list of loggers to clean up
+        self.test_loggers.append(logger_name)
         
         # Set our custom excepthook
         sys.excepthook = custom_excepthook
@@ -179,6 +215,36 @@ class TestLogger(unittest.TestCase):
         # Check that the exception was logged
         log_contents = self.read_log_file(self.log_file_path)
         self.assertTrue(any("KeyError: Test exception for excepthook" in line for line in log_contents))
+
+    def test_close_logger(self):
+        """Test close_logger function"""
+        # Create a logger with a file handler
+        logger_name = "CloseLoggerTest"
+        logger = setup_logger(
+            name=logger_name,
+            log_file=self.log_file_path
+        )
+        
+        # Add to our list of loggers to clean up
+        self.test_loggers.append(logger_name)
+        
+        # Verify the logger has handlers
+        self.assertTrue(len(logger.handlers) > 0)
+        
+        # Close the logger
+        close_logger(logger_name)
+        
+        # Verify all handlers have been removed
+        self.assertEqual(len(logger.handlers), 0)
+        
+        # Test closing the default logger
+        default_logger = get_logger()
+        self.assertTrue(len(default_logger.handlers) > 0)
+        
+        close_logger()
+        
+        # Verify all handlers have been removed from default logger
+        self.assertEqual(len(default_logger.handlers), 0)
 
 
 def run_manual_tests():
