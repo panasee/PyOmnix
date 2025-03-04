@@ -33,15 +33,34 @@ class LoggerConfig:
     logging.addLevelName(TRACE, "TRACE")
 
 class OmnixLogger(logging.Logger):
-    """Custom logger class that extends the standard Logger with trace-level logging capabilities."""
+    """Extends the standard Logger with trace-level logging capabilities."""
     def trace(self, msg, *args, **kwargs):
         """Log a message with TRACE level."""
         if self.isEnabledFor(LoggerConfig.TRACE):
             self.log(LoggerConfig.TRACE, msg, *args, **kwargs)
 
+    def validate(self, condition: bool, message: str, exception_type: Type[Exception] = AssertionError, log_level: int = logging.ERROR) -> None:
+        """
+        Validate a condition and log an error if it fails.
+
+        Args:
+            condition: Condition to validate
+            message: Error message if condition fails
+            exception_type: Type of exception to raise
+            logger_name: Name of logger to use (None for default)
+            log_level: Log level to use
+
+        Raises:
+            exception_type: If condition is False
+        """
+        if not condition:
+            self.log(log_level, message)
+            raise exception_type(message)
+
+# use the custom logger class to replace the default logger class
 logging.setLoggerClass(OmnixLogger)
 
-def setup_logger(
+def setup_logger(*,
     name: str = LoggerConfig.DEFAULT_NAME,
     log_level: int = LoggerConfig.DEFAULT_LEVEL,
     log_file: Optional[Path | str] = None,
@@ -63,7 +82,7 @@ def setup_logger(
         log_file: Optional path to log file
         log_format: Format string for log messages
         date_format: Format string for date in log messages
-        propagate: Whether to propagate messages to parent loggers
+        propagate: Whether to propagate messages to parent loggers, default is False to make loggers independent
         add_trace_level: Whether to add trace method to logger
     
     Returns:
@@ -219,25 +238,6 @@ def custom_excepthook(exc_type, exc_value, exc_traceback):
 # Override the default excepthook
 sys.excepthook = custom_excepthook
 
-def validate(condition: bool, message: str, exception_type: Type[Exception] = AssertionError, 
-             logger_name: Optional[str] = None, log_level: int = logging.ERROR) -> None:
-    """
-    Validate a condition and log an error if it fails.
-    
-    Args:
-        condition: Condition to validate
-        message: Error message if condition fails
-        exception_type: Type of exception to raise
-        logger_name: Name of logger to use (None for default)
-        log_level: Log level to use
-    
-    Raises:
-        exception_type: If condition is False
-    """
-    if not condition:
-        logger = get_logger(logger_name)
-        logger.log(log_level, message)
-        raise exception_type(message)
 
 def close_logger(name: Optional[str] = None) -> None:
     """

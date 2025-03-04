@@ -23,9 +23,9 @@ import numpy as np
 import pandas as pd
 
 from .utils import cm_to_inch, factor, default_plot_dict, is_notebook, hex_to_rgb
-from .logger import setup_logger
+from .ominix_logger import get_logger
 
-logger = setup_logger()
+logger = get_logger(__name__)
 
 class DataPlot():
     """

@@ -15,7 +15,7 @@ import unittest
 from typing import List, Optional
 
 # Import the logger module
-from PyOmnix.logger import (
+from PyOmnix.ominix_logger import (
     LoggerConfig,
     setup_logger,
     get_logger,
@@ -253,7 +253,7 @@ def run_manual_tests():
     
     # Test basic logger setup
     print("Testing basic logger setup...")
-    logger = setup_logger(name="ManualTest")
+    logger = setup_logger(name="ManualTest", log_level=logging.DEBUG)
     logger.debug("This is a debug message")
     logger.info("This is an info message")
     logger.warning("This is a warning message")
