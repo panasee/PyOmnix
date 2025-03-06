@@ -72,7 +72,7 @@ def setup_logger(*,
     max_size: int = 10 * 1024 * 1024, # 10 MB
     backup_count: int = 3,
     interval: int = 1 # Days
-) -> logging.Logger:
+) -> OmnixLogger:
     """
     Configure and return a logger instance with consistent formatting.
     
@@ -157,7 +157,7 @@ def setup_logger(*,
     
     return new_logger
 
-def get_logger(name: Optional[str] = None) -> logging.Logger:
+def get_logger(name: Optional[str] = None) -> OmnixLogger:
     """
     Get an existing logger or create a new one if it doesn't exist.
     

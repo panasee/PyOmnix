@@ -10,3 +10,5 @@ from .omnix_logger import setup_logger, get_logger
 
 set_envs()
 utils.OMNIX_PATH = set_paths()
+if utils.OMNIX_PATH is not None:
+    utils.OMNIX_PATH.mkdir(parents=True, exist_ok=True)

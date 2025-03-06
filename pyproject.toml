@@ -26,12 +26,20 @@ dependencies = [
     "kaleido==0.1.0.post1",
     "jupyter",
     "dash",
-    "apache-airflow>=2.7.0"
+    "prefect",
+    "langchain",
+    "langchain-deepseek",
+    "langchain-huggingface",
+    "langchain-openai",
+    "langchain-anthropic",
+    "langchain-google-genai",
+    "langchain-community",
 ]
 
 [project.optional-dependencies]
 gui = ["PyQt6"]
-workflow = [
+airflow = [
+    "apache-airflow>=2.7.0",
     "apache-airflow-providers-http",
     "apache-airflow-providers-sqlite",
     "apache-airflow-providers-postgres",
@@ -39,10 +47,10 @@ workflow = [
 ]
 
 [project.scripts]
-gui_pan_color = "PyOmnix.data_plot:DataPlot.gui_pan_color"
+gui_pan_color = "pyomnix.data_plot:DataPlot.gui_pan_color"
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.package-data]
-DaySpark = ["pltconfig/pan_color.json"]
+pyomnix = ["pltconfig/pan_color.json"]
