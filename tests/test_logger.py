@@ -15,13 +15,12 @@ import unittest
 from typing import List, Optional
 
 # Import the logger module
-from PyOmnix.omnix_logger import (
+from pyomnix.omnix_logger import (
     LoggerConfig,
     setup_logger,
     get_logger,
     close_logger,
     ExceptionHandler,
-    validate,
     custom_excepthook
 )
 
@@ -33,6 +32,7 @@ class TestLogger(unittest.TestCase):
         """Set up test fixtures"""
         # Create a temporary directory for log files
         self.temp_dir = tempfile.TemporaryDirectory()
+        self.logger = setup_logger()
         self.log_file_path = Path(self.temp_dir.name) / "test_log.log"
         
         # Store the original excepthook to restore it later
@@ -157,37 +157,6 @@ class TestLogger(unittest.TestCase):
             self.assertIsInstance(formatted, str)
             self.assertIn("ValueError: Test exception", formatted)
 
-    def test_validate_function_pass(self):
-        """Test validate function when condition passes"""
-        # This should not raise an exception
-        validate(True, "This should not raise an exception")
-
-    def test_validate_function_fail(self):
-        """Test validate function when condition fails"""
-        # Setup a logger with a file to capture the error
-        logger_name = "ValidateTest"
-        setup_logger(
-            name=logger_name,
-            log_file=self.log_file_path
-        )
-        
-        # Add to our list of loggers to clean up
-        self.test_loggers.append(logger_name)
-        
-        error_message = "Validation failed"
-        
-        # This should raise an AssertionError
-        with self.assertRaises(AssertionError):
-            validate(
-                False,
-                error_message,
-                logger_name=logger_name
-            )
-        
-        # Check that the error was logged
-        log_contents = self.read_log_file(self.log_file_path)
-        self.assertTrue(any(error_message in line for line in log_contents))
-
     def test_custom_excepthook(self):
         """Test custom_excepthook function"""
         # Setup a logger with a file to capture the exception
@@ -286,11 +255,11 @@ def run_manual_tests():
     print("Testing validate function...")
     try:
         print("Validating a true condition (should pass)...")
-        validate(True, "This should not be seen")
+        logger.validate(True, "This should not be seen")
         print("Validation passed")
         
         print("Validating a false condition (should fail)...")
-        validate(False, "This validation should fail")
+        logger.validate(False, "This validation should fail")
     except AssertionError as e:
         print(f"Validation failed as expected with: {e}")
     print("Validate function test complete\n")

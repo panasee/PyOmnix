@@ -15,6 +15,7 @@ import logging
 import sys
 import traceback
 from pathlib import Path
+from datetime import datetime
 from typing import Optional, Dict, Type
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 
@@ -27,6 +28,8 @@ class LoggerConfig:
     DEFAULT_LEVEL = logging.INFO
     DEFAULT_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     DEFAULT_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+    # Default log file name with timestamp
+    DEFAULT_LOG_FILE = f"pyomnix_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     
     # Custom log levels
     TRACE = 5
@@ -63,7 +66,7 @@ logging.setLoggerClass(OmnixLogger)
 def setup_logger(*,
     name: str = LoggerConfig.DEFAULT_NAME,
     log_level: int = LoggerConfig.DEFAULT_LEVEL,
-    log_file: Optional[Path | str] = None,
+    log_file: Optional[Path | str] = LoggerConfig.DEFAULT_LOG_FILE,
     log_format: str = LoggerConfig.DEFAULT_FORMAT,
     date_format: str = LoggerConfig.DEFAULT_DATE_FORMAT,
     propagate: bool = False,
@@ -253,15 +256,14 @@ def close_logger(name: Optional[str] = None) -> None:
                 handler.close()
                 DEFAULT_LOGGER.removeHandler(handler)
     else:
-        logger = logging.getLogger(name)
-        for handler in list(logger.handlers):
+        target_logger = logging.getLogger(name)
+        for handler in list(target_logger.handlers):
             handler.close()
-            logger.removeHandler(handler)
+            target_logger.removeHandler(handler)
 
 # Initialize the default logger
 default_logger = get_logger()
 
-# Example usage
 if __name__ == "__main__":
     logger = setup_logger(name="test", log_level=logging.DEBUG, log_file="test.log")
     logger.trace("This is a trace message")
