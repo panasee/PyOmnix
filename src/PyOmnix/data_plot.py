@@ -22,7 +22,7 @@ from plotly.subplots import make_subplots
 import numpy as np
 import pandas as pd
 
-from .utils import cm_to_inch, factor, default_plot_dict, is_notebook, hex_to_rgb
+from .utils import CM_TO_INCH, factor, DEFAULT_PLOT_DICT, is_notebook, hex_to_rgb
 from .omnix_logger import get_logger
 
 logger = get_logger(__name__)
@@ -50,7 +50,7 @@ class DataPlot():
             self.shape = dims
             self.params_list = self._create_params_list(dims)
             # define a tmp params used for temporary storage, especially in class methods for convenience
-            self.tmp = copy.deepcopy(default_plot_dict)
+            self.tmp = copy.deepcopy(DEFAULT_PLOT_DICT)
 
         def _create_params_list(self, dims: tuple[int, ...]) -> list[dict] | list[any]:
             """
@@ -60,7 +60,7 @@ class DataPlot():
             - dims: the dimensions of the parameters
             """
             if len(dims) == 1:
-                return [copy.deepcopy(default_plot_dict) for _ in range(dims[0])]
+                return [copy.deepcopy(DEFAULT_PLOT_DICT) for _ in range(dims[0])]
             else:
                 return [self._create_params_list(dims[1:]) for _ in range(dims[0])]
 
@@ -253,7 +253,7 @@ class DataPlot():
         - lines_per_fig: the number of lines per figure (used for appointing params)
         - **kwargs: keyword arguments for the plt.subplots function
         """
-        fig, ax = plt.subplots(n_row, n_col, figsize=(figsize_x * cm_to_inch, figsize_y * cm_to_inch), **kwargs)
+        fig, ax = plt.subplots(n_row, n_col, figsize=(figsize_x * CM_TO_INCH, figsize_y * CM_TO_INCH), **kwargs)
         fig.subplots_adjust(left=sub_adj[0], bottom=sub_adj[1], right=sub_adj[2], top=sub_adj[3], wspace=sub_adj[4],
                             hspace=sub_adj[5])
         return fig, ax, DataPlot.PlotParam(n_row, n_col, lines_per_fig)

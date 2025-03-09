@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyomnix"
-version = "0.1a2"
-description = "Integrated Tools for Daily Usage"
+version = "0.1b1"
+description = "Integrated Tools for Scientific Computing and Data Analysis"
 authors = [{name="Dongkai", email="dongkai001@e.ntu.edu.sg"}]
 readme = "README.md"
 license = {text = "MIT License"}
@@ -16,7 +16,8 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Information Analysis",
-    "Topic :: Scientific/Engineering :: Visualization"
+    "Topic :: Scientific/Engineering :: Visualization",
+    "License :: OSI Approved :: MIT License",
 ]
 dependencies = [
     "numpy",
@@ -38,13 +39,18 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = ["PyQt6"]
-airflow = [
-    "apache-airflow>=2.7.0",
-    "apache-airflow-providers-http",
-    "apache-airflow-providers-sqlite",
-    "apache-airflow-providers-postgres",
-    "apache-airflow-providers-mysql"
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-mock",
+    "ruff",
+    "mypy",
 ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pyomnix*"]
+exclude = ["tests*", "docs*", "examples*", "*.tests", "*.tests.*"]
 
 [project.scripts]
 gui_pan_color = "pyomnix.data_plot:DataPlot.gui_pan_color"
