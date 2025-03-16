@@ -1,11 +1,66 @@
-from matplotlib.colors import LinearSegmentedColormap
+import copy
 import numpy as np
+from matplotlib.colors import LinearSegmentedColormap
 from ..omnix_logger import get_logger
+from ..pltconfig import color_preset as colors
+from .data import ObjectArray
 
 logger = get_logger(__name__)
 
-def print_progress_bar(iteration: float, total: float, prefix='', suffix='', decimals=1, length=50, fill='#',
-                       print_end="\r") -> None:
+# define plotting default settings
+DEFAULT_PLOT_DICT = {
+    "color": colors.Presets["Nl"][0],
+    "linewidth": 1,
+    "linestyle": "-",
+    "marker": "o",
+    "markersize": 1.5,
+    "markerfacecolor": "None",
+    "markeredgecolor": "black",
+    "markeredgewidth": 0.3,
+    "label": "",
+    "alpha": 0.77,
+}
+
+
+class PlotParam(ObjectArray):
+    """
+    This class is used to store the parameters for the plot
+    """
+
+    def __init__(self, *dims: int) -> None:
+        """
+        initialize the PlotParam
+
+        Args:
+        - no_of_figs: the number of figures to be plotted
+        """
+        super().__init__(*dims)
+        # define a tmp params used for temporary storage, especially in class methods for convenience
+        self.tmp = copy.deepcopy(DEFAULT_PLOT_DICT)
+
+    def _create_objects(self, dims: tuple[int, ...]) -> list[dict] | list[any]:
+        """
+        create the list of parameters for the plot
+
+        Args:
+        - dims: the dimensions of the parameters
+        """
+        if len(dims) == 1:
+            return [copy.deepcopy(DEFAULT_PLOT_DICT) for _ in range(dims[0])]
+        else:
+            return [self._create_objects(dims[1:]) for _ in range(dims[0])]
+
+
+def print_progress_bar(
+    iteration: float,
+    total: float,
+    prefix="",
+    suffix="",
+    decimals=1,
+    length=50,
+    fill="#",
+    print_end="\r",
+) -> None:
     """
     Call in a loop to create terminal progress bar
 
@@ -21,14 +76,16 @@ def print_progress_bar(iteration: float, total: float, prefix='', suffix='', dec
     """
     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
     filled_length = int(length * iteration // total)
-    barr = fill * filled_length + '-' * (length - filled_length)
-    print(f'\r{prefix} [{barr}] {percent}% {suffix}', end=print_end, flush=True)
+    barr = fill * filled_length + "-" * (length - filled_length)
+    print(f"\r{prefix} [{barr}] {percent}% {suffix}", end=print_end, flush=True)
     # Print New Line on Complete
     if iteration == total:
         print()
 
 
-def hex_to_rgb(hex_str: str, fractional: bool = True) -> tuple[int, ...] | tuple[float, ...]:
+def hex_to_rgb(
+    hex_str: str, fractional: bool = True
+) -> tuple[int, ...] | tuple[float, ...]:
     """
     convert hex color to rgb color
 
@@ -36,10 +93,11 @@ def hex_to_rgb(hex_str: str, fractional: bool = True) -> tuple[int, ...] | tuple
         hex_str (str): hex color
         fractional (bool): if the return value is fractional or not
     """
-    hex_str = hex_str.lstrip('#')
+    hex_str = hex_str.lstrip("#")
     if fractional:
-        return tuple(int(hex_str[i:i + 2], 16) / 255 for i in (0, 2, 4))
-    return tuple(int(hex_str[i:i + 2], 16) for i in (0, 2, 4))
+        return tuple(int(hex_str[i : i + 2], 16) / 255 for i in (0, 2, 4))
+    return tuple(int(hex_str[i : i + 2], 16) for i in (0, 2, 4))
+
 
 def truncate_cmap(cmap, min_val: float = 0.0, max_val: float = 1.0, n: int = 256):
     """
@@ -56,8 +114,11 @@ def truncate_cmap(cmap, min_val: float = 0.0, max_val: float = 1.0, n: int = 256
             the number of colors in the colormap
     """
     new_cmap = LinearSegmentedColormap.from_list(
-        f"trunc({cmap.name},{min_val:.2f},{max_val:.2f})", cmap(np.linspace(min_val, max_val, n)))
+        f"trunc({cmap.name},{min_val:.2f},{max_val:.2f})",
+        cmap(np.linspace(min_val, max_val, n)),
+    )
     return new_cmap
+
 
 def combine_cmap(cmap_lst: list, segment: int = 128):
     """

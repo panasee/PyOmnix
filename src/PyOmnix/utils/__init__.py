@@ -22,20 +22,34 @@ from .math import (
     KB,
     UNIT_FACTOR_FROMSI,
     UNIT_FACTOR_TO_SI,
-    DEFAULT_PLOT_DICT,
-    SWITCH_DICT
+    SWITCH_DICT,
 )
 from .plot import (
     print_progress_bar,
     hex_to_rgb,
     truncate_cmap,
-    combine_cmap
+    combine_cmap,
+    PlotParam,
+    DEFAULT_PLOT_DICT,
 )
-from .data import rename_duplicates
+from .data import (
+    ObjectArray,
+    CacheArray,
+    match_with_tolerance,
+    symmetrize,
+    difference,
+    loop_diff,
+    identify_direction,
+)
 
 # For backward compatibility
 __all__ = [
     "set_envs",
-    "CM_TO_INCH", "HPLANCK", "HBAR", "KB", "factor",
-    "hex_to_rgb", "is_notebook",
+    "CM_TO_INCH",
+    "HPLANCK",
+    "HBAR",
+    "KB",
+    "factor",
+    "hex_to_rgb",
+    "is_notebook",
 ]

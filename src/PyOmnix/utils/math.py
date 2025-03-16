@@ -3,34 +3,41 @@ from datetime import datetime
 from typing import Generator, Literal, Sequence, Optional
 import numpy as np
 import pandas as pd
-from ..pltconfig import color_preset as colors
 
 
 # define constants
 CM_TO_INCH = 0.3937
 HPLANCK = 6.626 * 10 ** (-34)  # SI unit: J*s
 HBAR = HPLANCK / 2 / np.pi
-HBAR_THZ = HBAR * 10 ** 12  # SI unit: J*s -> THz
+HBAR_THZ = HBAR * 10**12  # SI unit: J*s -> THz
 KB = 1.38 * 10 ** (-23)  # SI unit: J/K
-UNIT_FACTOR_FROMSI = {"": 1, "f": 1E15, "p": 1E12,
-                      "n": 1E9, "u": 1E6, "m": 1E3,
-                      "k": 1E-3, "M": 1E-6, "G": 1E-9,
-                      "T": 1E-12, "P": 1E-15}
-UNIT_FACTOR_TO_SI = {"": 1, "f": 1E-15, "p": 1E-12,
-                     "n": 1E-9, "u": 1E-6, "m": 1E-3,
-                     "k": 1E3, "M": 1E6, "G": 1E9,
-                     "T": 1E12,"P": 1E15}
+UNIT_FACTOR_FROMSI = {
+    "": 1,
+    "f": 1e15,
+    "p": 1e12,
+    "n": 1e9,
+    "u": 1e6,
+    "m": 1e3,
+    "k": 1e-3,
+    "M": 1e-6,
+    "G": 1e-9,
+    "T": 1e-12,
+    "P": 1e-15,
+}
+UNIT_FACTOR_TO_SI = {
+    "": 1,
+    "f": 1e-15,
+    "p": 1e-12,
+    "n": 1e-9,
+    "u": 1e-6,
+    "m": 1e-3,
+    "k": 1e3,
+    "M": 1e6,
+    "G": 1e9,
+    "T": 1e12,
+    "P": 1e15,
+}
 
-#define plotting default settings
-DEFAULT_PLOT_DICT = {"color": colors.Presets["Nl"][0],
-                     "linewidth": 1,
-                     "linestyle": "-",
-                     "marker": "o",
-                     "markersize": 1.5,
-                     "markerfacecolor": "None",
-                     "markeredgecolor": "black",
-                     "markeredgewidth": 0.3,
-                     "label": "", "alpha": 0.77}
 
 SWITCH_DICT = {"on": True, "off": False, "ON": True, "OFF": False}
 
@@ -54,6 +61,7 @@ def split_no_str(s: str | int | float) -> tuple[float | None, str | None]:
         return float(items[0]), items[1]
     else:
         return None, None
+
 
 def factor(unit: str, mode: str = "from_SI"):
     """
@@ -79,8 +87,16 @@ def factor(unit: str, mode: str = "from_SI"):
         else:
             return 1
 
-def convert_unit(before: float | int | str | list[float | int | str, ...] | tuple[float | int | str, ...] | np.ndarray,
-                 target_unit: str = "") -> tuple[float, str] | tuple[list[float], list[str]]:
+
+def convert_unit(
+    before: float
+    | int
+    | str
+    | list[float | int | str, ...]
+    | tuple[float | int | str, ...]
+    | np.ndarray,
+    target_unit: str = "",
+) -> tuple[float, str] | tuple[list[float], list[str]]:
     """
     Convert the value with the unit to the SI unit.
 
@@ -99,7 +115,10 @@ def convert_unit(before: float | int | str | list[float | int | str, ...] | tupl
     elif isinstance(before, (np.integer, np.floating)):
         return convert_unit(float(before), target_unit)
     elif isinstance(before, (list, tuple, np.ndarray)):
-        return [convert_unit(i, target_unit)[0] for i in before], [convert_unit(i, target_unit)[1] for i in before]
+        return [convert_unit(i, target_unit)[0] for i in before], [
+            convert_unit(i, target_unit)[1] for i in before
+        ]
+
 
 def gen_seq(start, end, step):
     """
@@ -114,6 +133,7 @@ def gen_seq(start, end, step):
         yield value
         value += step
     yield end
+
 
 def constant_generator(value, repeat: int | Literal["inf"] = "inf"):
     """
@@ -174,8 +194,13 @@ def next_lst_gen(lst_gens: list[Generator]):
     except StopIteration:
         return None
 
-def timestr_convert(t: pd.Series | Sequence[str] | np.ndarray, format_str: str = "%Y-%m-%d_%H:%M:%S.%f", *,
-                    elapsed: Optional[Literal["sec", "min", "hour"]] = None) -> list[datetime] | list[float]:
+
+def timestr_convert(
+    t: pd.Series | Sequence[str] | np.ndarray,
+    format_str: str = "%Y-%m-%d_%H:%M:%S.%f",
+    *,
+    elapsed: Optional[Literal["sec", "min", "hour"]] = None,
+) -> list[datetime] | list[float]:
     """
     Convert the time to datetime object, used to split time series without day information
 
@@ -213,13 +238,21 @@ def timestr_convert(t: pd.Series | Sequence[str] | np.ndarray, format_str: str =
         time_start = datetime_lst[0]
         match elapsed:
             case "sec":
-                elapsed_times = [(dt - time_start).total_seconds() for dt in datetime_lst]
+                elapsed_times = [
+                    (dt - time_start).total_seconds() for dt in datetime_lst
+                ]
             case "min":
-                elapsed_times = [(dt - time_start).total_seconds() / 60 for dt in datetime_lst]
+                elapsed_times = [
+                    (dt - time_start).total_seconds() / 60 for dt in datetime_lst
+                ]
             case "hour":
-                elapsed_times = [(dt - time_start).total_seconds() / 3600 for dt in datetime_lst]
+                elapsed_times = [
+                    (dt - time_start).total_seconds() / 3600 for dt in datetime_lst
+                ]
             case _:
-                raise ValueError("The elapsed argument should be one of 'sec', 'min', 'hour'")
+                raise ValueError(
+                    "The elapsed argument should be one of 'sec', 'min', 'hour'"
+                )
         return elapsed_times
     else:
         return datetime_lst

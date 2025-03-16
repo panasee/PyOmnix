@@ -1,8 +1,10 @@
 """
 Constants for the PyOmnix project.
 """
+
 from pathlib import Path
 import os
+
 # use standard logging here to avoid circular import
 import logging
 from .omnix_logger import get_logger
@@ -10,7 +12,9 @@ from .omnix_logger import get_logger
 logger = get_logger(__name__)
 # Path
 OMNIX_PATH: Path | None = None
-LOG_FILE_PATH: str | Path = None   # folder for log files
+LOG_FILE_PATH: str | Path = None  # folder for log files
+
+
 def set_paths(*, omnix_path: Path | str | None = None) -> None:
     """
     two ways are provided to set the paths:
