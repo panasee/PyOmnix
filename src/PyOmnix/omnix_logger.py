@@ -80,6 +80,8 @@ def setup_logger(
     *,
     name: str = LoggerConfig.DEFAULT_NAME,
     log_level: int = LoggerConfig.DEFAULT_LEVEL,
+    console_level: Optional[int] = None,
+    file_level: Optional[int] = None,
     log_file: Optional[Path | str] = LoggerConfig.DEFAULT_LOG_FILE,
     log_format: str = LoggerConfig.DEFAULT_FORMAT,
     date_format: str = LoggerConfig.DEFAULT_DATE_FORMAT,
@@ -95,12 +97,18 @@ def setup_logger(
 
     Args:
         name: Logger name
-        log_level: Logging level
+        log_level: Base logging level for the logger
+        console_level: Specific log level for console output (defaults to log_level if None)
+        file_level: Specific log level for file output (defaults to log_level if None)
         log_file: Optional path to log file
         log_format: Format string for log messages
         date_format: Format string for date in log messages
         propagate: Whether to propagate messages to parent loggers, default is False to make loggers independent
         add_trace_level: Whether to add trace method to logger
+        rotation: Type of log rotation ('size', 'time', or None)
+        max_size: Maximum size in bytes for size-based rotation
+        backup_count: Number of backup files to keep
+        interval: Interval for time-based rotation (in days)
 
     Returns:
         Configured logger instance
@@ -120,6 +128,8 @@ def setup_logger(
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
+    # Set console handler level (use console_level if provided, otherwise use log_level)
+    console_handler.setLevel(console_level if console_level is not None else log_level)
     new_logger.addHandler(console_handler)
 
     # File handler (if log_file is specified)
@@ -149,6 +159,8 @@ def setup_logger(
                 file_handler = logging.FileHandler(log_file, encoding="utf-8")
 
             file_handler.setFormatter(formatter)
+            # Set file handler level (use file_level if provided, otherwise use log_level)
+            file_handler.setLevel(file_level if file_level is not None else log_level)
             new_logger.addHandler(file_handler)
         except (IOError, PermissionError) as e:
             original_level = console_handler.level
@@ -178,9 +190,17 @@ def setup_logger(
     return new_logger
 
 
-def get_logger(name: Optional[str] = None) -> OmnixLogger:
+def get_logger(
+    name: Optional[str] = None,
+    log_level: Optional[int] = LoggerConfig.DEFAULT_LEVEL,
+    *,
+    console_level: Optional[int] = logging.INFO,
+    file_level: Optional[int] = logging.DEBUG,
+    log_file: Optional[Path | str] = None,
+) -> OmnixLogger:
     """
     Get an existing logger or create a new one if it doesn't exist.
+    if name is None, returns the default logger (all other parameters are ignored)
 
     Args:
         name: Logger name (if None, returns the default logger)
@@ -194,10 +214,13 @@ def get_logger(name: Optional[str] = None) -> OmnixLogger:
             DEFAULT_LOGGER = setup_logger()
         return DEFAULT_LOGGER
 
-    new_logger = logging.getLogger(name)
-    if not new_logger.handlers:
-        # If logger exists but has no handlers, set it up
-        return setup_logger(name=name)
+    new_logger = setup_logger(
+        name=name,
+        log_level=log_level,
+        console_level=console_level,
+        file_level=file_level,
+        log_file=log_file if log_file is not None else LoggerConfig.DEFAULT_LOG_FILE,
+    )
     return new_logger
 
 
