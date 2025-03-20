@@ -120,6 +120,25 @@ def convert_unit(
         ]
 
 
+def get_unit_factor_and_texname(unit: str) -> tuple[float, str]:
+    """
+    Used in plotting, to get the factor (from SI to target) and the TeX name of the unit
+
+    Args:
+    - unit: the unit name string (like: uA)
+    """
+    _factor = factor(unit)
+    if unit[0] == "u":
+        namestr = rf"$\mathrm{{\mu {unit[1:]}}}$".replace("Omega", r"\Omega").replace(
+            "Ohm", r"\Omega"
+        )
+    else:
+        namestr = rf"$\mathrm{{{unit}}}$".replace("Omega", r"\Omega").replace(
+            "Ohm", r"\Omega"
+        )
+    return _factor, namestr
+
+
 def gen_seq(start, end, step):
     """
     double-ended bi-direction sequence generator

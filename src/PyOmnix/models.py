@@ -10,7 +10,7 @@ import importlib
 import io
 import base64
 from functools import partial
-from typing import Dict, Optional, Any, List, Generator
+from typing import Dict, Optional, Any, List, Generator, Union, Literal
 from pathlib import Path
 from PIL import Image
 from langchain_core.messages import (
@@ -22,8 +22,9 @@ from langchain_core.messages import (
     FunctionMessage,
     ChatMessage,
 )
-from .omnix_logger import get_logger, setup_logger
-from .consts import OMNIX_PATH, LOG_FILE_PATH
+from .omnix_logger import get_logger
+from .consts import OMNIX_PATH
+from pydantic import BaseModel, Field
 
 logger = get_logger(__name__)
 
@@ -104,9 +105,12 @@ class ModelConfig:
             provider = model
         return provider, model
 
-    def setup_models(self, models_name: str | list[str] = "deepseek"):
+    def setup_models(self, models_fullname: str | list[str] = "deepseek"):
         """
         Setup providers and model apis (the api is a interface of langchain, not the real model called, actually deepseek/openai api can be used for most models). Indicate the provider before the model name if used. (e.g. "siliconflow-deepseek")
+
+        Args:
+            models_name(str | list[str]): The fullname of the model to use
         """
         model_module_dict = {
             "openai": ["langchain_openai", "ChatOpenAI"],
@@ -115,10 +119,10 @@ class ModelConfig:
             "deepseek": ["langchain_deepseek", "ChatDeepSeek"],
             "qwen": ["langchain_community.chat_models.tongyi", "ChatTongyi"],
         }
-        if isinstance(models_name, str):
-            models_name = [models_name]
+        if isinstance(models_fullname, str):
+            models_fullname = [models_fullname]
 
-        for model_full in models_name:
+        for model_full in models_fullname:
             provider, model = self.get_provider_model(model_full)
 
             logger.validate(
@@ -143,7 +147,7 @@ class ModelConfig:
                 )
             # base_url and api_base are the same, for different apis
             logger.info("Model %s initialized successfully.", model)
-        return {model: self.models[model] for model in models_name}
+        return {model: self.models[model] for model in models_fullname}
         ##TODO: add interface for local models
 
     def save_config(self) -> None:
@@ -231,11 +235,34 @@ class Models:
     class for calling model APIs.
     """
 
-    def __init__(self, models_name: str | list[str]):
-        self.logger = setup_logger(
-            name=self.__class__.__name__, log_file=Path(f"{LOG_FILE_PATH}/models.log")
+    def __init__(self, models_fullname: str | list[str]):
+        self.models = ModelConfig().setup_models(models_fullname)
+
+        if isinstance(models_fullname, str):
+            models_fullname = [models_fullname]
+        providers = [ModelConfig.get_provider_model(i)[0] for i in models_fullname]
+        self.input_tokens = {provider: {} for provider in providers}
+        self.output_tokens = {provider: {} for provider in providers}
+
+    def _update_token_count(self, provider: str, response: AIMessage) -> None:
+        """
+        Update the token count for the model.
+        """
+        logger.validate(
+            isinstance(response, AIMessage), "Response must be an AIMessage."
         )
-        self.models = ModelConfig().setup_models(models_name)
+        model_name = response.response_metadata["model_name"]
+        if model_name not in self.input_tokens[provider]:
+            self.input_tokens[provider][model_name] = 0
+        if model_name not in self.output_tokens[provider]:
+            self.output_tokens[provider][model_name] = 0
+
+        self.output_tokens[provider][model_name] += response.usage_metadata[
+            "output_tokens"
+        ]
+        self.input_tokens[provider][model_name] += response.usage_metadata[
+            "input_tokens"
+        ]
 
     def _get_response(
         self,
@@ -255,10 +282,11 @@ class Models:
             response = chat_model.batch(basemessages)
         else:
             response = (
-                chat_model.invoke(basemessages[0], config=invoke_config)
+                chat_model.invoke(basemessages[0], config=invoke_config, **kwargs)
                 if not stream
                 else chat_model.stream(basemessages[0])
             )
+
         return response
 
     def chat_completion(
@@ -280,15 +308,15 @@ class Models:
         Send a chat completion request to the model.
 
         Args:
-            full_name(str): The full name of the model to use
-            model(str): The specific model to use
+            full_name(str): The full name of the model to use (like "siliconflow-deepseek")
+            model(str): The specific model to use (like "deepseek-chat")
             messages(list[dict[str, str] | BaseMessage] | list[list[dict[str, str] | BaseMessage]]): The messages to send to the model or a batch of messages
             stream(bool): Whether to stream the response
             invoke_config(dict[str, Any]): Additional parameters to pass to the model (no stream and no batch)
             **kwargs: Additional parameters to pass to the model
         """
         chat = self.models[full_name](model=model, **kwargs)
-        if not isinstance(messages[0], list):
+        if not isinstance(messages[0], list | tuple):
             messages = [messages]
             return self.chat_completion(
                 full_name,
@@ -338,7 +366,18 @@ class Models:
                         lc_messages.append(ChatMessage(content=content, role=role))
             lc_batch_messages.append(lc_messages)
 
-        return self._get_response(chat, lc_batch_messages, stream, invoke_config)
+        response = self._get_response(chat, lc_batch_messages, stream, invoke_config)
+
+        if stream:
+            logger.warning("Streaming is not supported for token counting.")
+            return response
+
+        provider = ModelConfig.get_provider_model(full_name)[0]
+        if isinstance(response, AIMessage):
+            response = [response]
+        for i in response:
+            self._update_token_count(provider, i)
+        return response
 
     def chat_with_images(
         self,
@@ -472,3 +511,139 @@ class Models:
         buffered = io.BytesIO()
         img.save(buffered, format="JPEG")
         return base64.b64encode(buffered.getvalue()).decode()
+
+class Questioner(Models):
+    """
+    A class for generating meaningful questions based on previous context and answers.
+
+    This class leverages language models to analyze previous interactions and generate
+    relevant follow-up questions that can help deepen understanding, clarify ambiguities,
+    or explore new aspects of a topic.
+    """
+
+    def __init__(
+        self,
+        provider_model: str,
+        modelname: str,
+        prompt: Optional[str] = "",
+    ):
+        """
+        Initialize the Questioner with a specific model.
+
+        Args:
+            provider_model: The fullname of the model to use for generating questions (e.g. "siliconflow-deepseek")
+            modelname: The name of the model to use for generating questions (e.g. "deepseek-chat")
+            prompt: The prompt to use for generating questions, leave empty for default prompt
+        """
+        super().__init__(provider_model)
+
+        if prompt:
+            self.prompt = prompt
+        else:
+            self.prompt = "You are an expert at generating insightful follow-up questions. Based on the context and previous answers, generate a thoughtful question that would deepen understanding or explore new aspects of the topic."
+
+        self.chat = partial(
+            self.chat_completion,
+            full_name=provider_model,
+            model=modelname,
+        )
+
+    def question(
+        self,
+        context: str,
+        num_questions: int = 1,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = 256,
+    ) -> List[str]:
+        """
+        Generate follow-up questions based on context and previous answers.
+
+        Args:
+            context: The initial context or topic
+            previous_answers: List of previous answers or responses
+            num_questions: Number of questions to generate
+            temperature: Creativity parameter (higher = more creative)
+            max_tokens: Maximum length of generated questions
+
+        Returns:
+            List of generated questions
+        """
+        provider, model_name = self.get_provider_model(self.model)
+
+        # Construct prompt with context and previous answers
+        prompt = [
+            {
+                "role": "system",
+                "content": f"You are an expert at generating insightful follow-up questions. Based on the context and previous answers, generate {num_questions} thoughtful questions that would deepen understanding or explore new aspects of the topic.",
+            },
+            {
+                "role": "user",
+                "content": f"Context: {context}\n\nPrevious answers: {' '.join(previous_answers)}\n\nGenerate {num_questions} follow-up questions:",
+            },
+        ]
+
+        response = self.chat_completion(
+            self.model,
+            model_name,
+            prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+        # Parse the response to extract questions
+        if isinstance(response, dict) and "content" in response:
+            content = response["content"]
+        elif hasattr(response, "content"):
+            content = response.content
+        else:
+            logger.error("Unexpected response format from model")
+            return []
+
+        # Extract questions from the response
+        questions = []
+        for line in content.strip().split("\n"):
+            line = line.strip()
+            if line and (line.endswith("?") or line[0].isdigit() and "?" in line):
+                # Clean up numbering if present
+                if line[0].isdigit() and "." in line[:3]:
+                    line = line.split(".", 1)[1].strip()
+                questions.append(line)
+
+        return questions[:num_questions]
+
+    def ask_clarifying_question(self, statement: str, temperature: float = 0.6) -> str:
+        """
+        Generate a single clarifying question based on a statement.
+
+        Args:
+            statement: The statement to generate a clarifying question for
+            temperature: Creativity parameter for the model
+
+        Returns:
+            A clarifying question
+        """
+        provider, model_name = self.get_provider_model(self.model)
+
+        prompt = [
+            {
+                "role": "system",
+                "content": "You are an expert at asking clarifying questions. Given a statement, ask one insightful question that would help clarify or expand on the information provided.",
+            },
+            {
+                "role": "user",
+                "content": f"Statement: {statement}\n\nAsk one clarifying question:",
+            },
+        ]
+
+        response = self.chat_completion(
+            self.model, model_name, prompt, temperature=temperature
+        )
+
+        if isinstance(response, dict) and "content" in response:
+            return response["content"].strip()
+        elif hasattr(response, "content"):
+            return response.content.strip()
+        else:
+            logger.error("Unexpected response format from model")
+            return "Could you elaborate more on that?"
+

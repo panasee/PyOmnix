@@ -34,21 +34,9 @@ class PlotParam(ObjectArray):
         Args:
         - no_of_figs: the number of figures to be plotted
         """
-        super().__init__(*dims)
+        super().__init__(*dims, fill_value=copy.deepcopy(DEFAULT_PLOT_DICT))
         # define a tmp params used for temporary storage, especially in class methods for convenience
         self.tmp = copy.deepcopy(DEFAULT_PLOT_DICT)
-
-    def _create_objects(self, dims: tuple[int, ...]) -> list[dict] | list[any]:
-        """
-        create the list of parameters for the plot
-
-        Args:
-        - dims: the dimensions of the parameters
-        """
-        if len(dims) == 1:
-            return [copy.deepcopy(DEFAULT_PLOT_DICT) for _ in range(dims[0])]
-        else:
-            return [self._create_objects(dims[1:]) for _ in range(dims[0])]
 
 
 def print_progress_bar(

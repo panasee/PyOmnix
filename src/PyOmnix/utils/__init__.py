@@ -15,6 +15,7 @@ from .math import (
     combined_generator_list,
     next_lst_gen,
     timestr_convert,
+    get_unit_factor_and_texname,
     CM_TO_INCH,
     HPLANCK,
     HBAR,

@@ -17,6 +17,9 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 from matplotlib.colors import Colormap
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
+from mpl_toolkits.mplot3d import Axes3D
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
@@ -27,7 +30,9 @@ from .utils import (
     factor,
     is_notebook,
     hex_to_rgb,
-    PlotParam
+    PlotParam,
+    ObjectArray,
+    get_unit_factor_and_texname,
 )
 from .omnix_logger import get_logger
 
@@ -45,28 +50,152 @@ class DataManipulator:
 
     def __init__(
         self,
-        *,
-        no_params: tuple[int] | int = 4,
+        *dims: int,
+        plot_params: Optional[tuple[int] | int] = None,
         usetex: bool = False,
         usepgf: bool = False,
     ) -> None:
         """
-        Initialize the FileOrganizer and load the settings for matplotlib saved in another file
+        Initialize the DataManipulator and load the settings for matplotlib saved in another file
 
         Args:
-        - no_params: the number of params to be initiated (default:4)
+        - *dims: the dimensions of the data
+        - plot_params: the parameters for the plot, the format is (n_row, n_col, lines_per_fig) or just a single integer
         - usetex: whether to use the TeX engine to render text
         - usepgf: whether to use the pgf backend
         """
-        self.plot_types: list[list[str]] = []
         self.load_settings(usetex, usepgf)
-        self.unit = {"I": "A", "V": "V", "R": "Ohm", "T": "K", "B": "T", "f": "Hz"}
-        # params here are mainly used for internal methods
-        self.params = PlotParam(no_params)
+        # data manipulating
+        self.datas = ObjectArray(*dims)
+        self.labels = ObjectArray(*dims)
+        # static plotting
+        self.plot_types: list[list[str]] = []
+        self.unit = {
+            "I": "A",
+            "V": "V",
+            "R": "Ohm",
+            "T": "K",
+            "B": "T",
+            "f": "Hz",
+            "1": "",
+        }
+        if plot_params is None:
+            plot_params = dims
+        self.params = PlotParam(*plot_params)
+        # dynamic plotting
         self.live_dfs: list[list[list[go.Scatter]]] = []
         self.go_f: Optional[go.FigureWidget] = None
         self._stop_event = threading.Event()
         self._thread = None
+
+    #####################
+    # data manipulating #
+    #####################
+    def extend_dims(self, *dims: int) -> None:
+        """
+        Extend the dimensions of the data
+        """
+        self.datas.extend(*dims)
+        self.labels.extend(*dims)
+
+    def load_dfs(
+        self,
+        loc: tuple[Sequence[int], ...] | tuple[int, ...],
+        data_in: Path | str | pd.DataFrame | Sequence[Path | str | pd.DataFrame],
+        label_in: Optional[str | Sequence[str]] = None,
+        **kwargs,
+    ) -> None:
+        """
+        Load the data from the given path(s), use list or tuple to specify multiple files at the same time
+
+        Args:
+        - loc: the location of the data
+        - data_in: the dataframe or the path to the data
+        - label_in: the label of the data
+        - **kwargs: keyword arguments for pd.read_csv (sep, skiprow, header, float_precision, ...), shared by all files
+        """
+        if not isinstance(data_in, tuple | list):
+            data_in = (data_in,)
+        if not isinstance(loc[0], tuple | list):
+            loc = (loc,)
+
+        if label_in is None:
+            label_in = ["" for _ in range(len(loc))]
+        elif not isinstance(label_in, tuple | list):
+            label_in = (label_in,)
+        logger.validate(
+            len(data_in) == len(loc) == len(label_in),
+            "data_path and loc must have the same length",
+        )
+
+        for path, loc, label in zip(data_in, loc, label_in):
+            if isinstance(path, pd.DataFrame):
+                self.datas[*loc] = path
+            else:
+                self.datas[*loc] = pd.read_csv(path, **kwargs)
+            self.labels[*loc] = label
+
+    def add_label(self, label: str, loc: tuple[int, ...] | int) -> None:
+        """
+        Add a label to the data at the given location.
+        """
+        if isinstance(loc, int):
+            loc = (loc,)
+        self.labels[*loc] = label
+
+    def get_datas(
+        self,
+        *,
+        loc: Optional[tuple[int, ...] | int] = None,
+        label: Optional[str | Sequence[str]] = None,
+        concat: bool = False,
+    ) -> pd.DataFrame | list[pd.DataFrame]:
+        """
+        Get the data dataframes from the given location.
+        Either loc or label should be provided, but not both.
+        (label would be ignored if loc is provided)
+        for batch data, use ((1,),(2,)) instead of (1,2)
+
+        Args:
+            loc: The location indices to retrieve data from
+            label: The label to search for in the data
+
+        Returns:
+            None if no data is found, or a list of DataFrames
+        """
+        dfs = None
+        if loc is not None:
+            if isinstance(loc, int):
+                loc = (loc,)
+            if isinstance(loc[0], int):
+                loc = (loc,)
+            if isinstance(loc[0], tuple | list | np.ndarray):
+                dfs = [self.datas[*loc_i] for loc_i in loc]
+            else:
+                logger.error("Invalid loc type")
+                return
+
+        elif label is not None:
+            # Find locations with matching label
+            locations = self.labels.find_objs(label)
+            # Return all matching data as a list of tuples
+            if locations:
+                dfs = [self.datas[*loc] for loc in locations]
+            else:
+                logger.warning("No data found with label: %s", label)
+                return None
+        else:
+            logger.error("Either loc or label must be provided")
+            return
+
+        if concat:
+            return pd.concat(dfs)
+        else:
+            return dfs
+
+    ###################
+    # static plotting #
+    ###################
 
     def unit_factor(self, property_name: str) -> float:
         """
@@ -75,7 +204,7 @@ class DataManipulator:
         Args:
         - property_name: the property name string (like: I)
         """
-        return self.get_unit_factor_and_texname(self.unit[property_name])[0]
+        return get_unit_factor_and_texname(self.unit[property_name])[0]
 
     def unit_texname(self, property_name: str) -> str:
         """
@@ -84,26 +213,7 @@ class DataManipulator:
         Args:
         - property_name: the property name string (like: I)
         """
-        return self.get_unit_factor_and_texname(self.unit[property_name])[1]
-
-    @staticmethod
-    def get_unit_factor_and_texname(unit: str) -> tuple[float, str]:
-        """
-        Used in plotting, to get the factor (from SI to target) and the TeX name of the unit
-
-        Args:
-        - unit: the unit name string (like: uA)
-        """
-        _factor = factor(unit)
-        if unit[0] == "u":
-            namestr = rf"$\mathrm{{\mu {unit[1:]}}}$".replace(
-                "Omega", r"\Omega"
-            ).replace("Ohm", r"\Omega")
-        else:
-            namestr = rf"$\mathrm{{{unit}}}$".replace("Omega", r"\Omega").replace(
-                "Ohm", r"\Omega"
-            )
-        return _factor, namestr
+        return get_unit_factor_and_texname(self.unit[property_name])[1]
 
     def set_unit(self, unit_new: dict = None) -> None:
         """
@@ -114,13 +224,23 @@ class DataManipulator:
         """
         self.unit.update(unit_new)
 
-    def plot_df_cols(self, data_df: pd.DataFrame) -> Optional[tuple[Figure, Axes]]:
+    def plot_df_cols(
+        self,
+        *,
+        data_df: Optional[pd.DataFrame] = None,
+        loc: Optional[tuple[int, ...] | int] = None,
+        label: Optional[str] = None,
+    ) -> Optional[tuple[Figure, Axes]]:
         """
-        plot all columns w.r.t. the first column(not index) in the dataframe
+        plot all columns w.r.t. the first column(not index) in the dataframe. data_df, loc and label are mutually exclusive, with descending priority
 
         Args:
         - data_df: the dataframe containing the data
+        - loc: the location of the data
+        - label: the label of the data
         """
+        if data_df is None:
+            data_df = self.get_datas(loc=loc, label=label, concat=True)
         fig, ax, _ = self.init_canvas(1, 1, 14, 20)
         for col in data_df.columns[1:]:
             ax.plot(data_df.iloc[:, 0], data_df[col], label=col)
@@ -130,15 +250,17 @@ class DataManipulator:
         ax.legend(edgecolor="black", prop=self.legend_font)
         return fig, ax
 
-    @staticmethod
     def plot_mapping(
-        data_df: pd.DataFrame,
+        self,
         mapping_x: any,
         mapping_y: any,
         mapping_val: any,
         *,
-        fig: Figure = None,
-        ax: Axes = None,
+        data_df: Optional[pd.DataFrame] = None,
+        loc: Optional[tuple[int, ...] | int] = None,
+        label: Optional[str] = None,
+        fig: Optional[Figure] = None,
+        ax: Optional[Axes] = None,
         cmap: str | Colormap = "viridis",
     ) -> tuple[Figure, Axes]:
         """
@@ -153,6 +275,9 @@ class DataManipulator:
         - ax: the axes to plot the figure
         - cmap: the colormap to use
         """
+        if data_df is None:
+            data_df = self.get_datas(loc=loc, label=label, concat=True)
+
         grid_df = data_df.pivot(index=mapping_x, columns=mapping_y, values=mapping_val)
         x_arr, y_arr = np.meshgrid(grid_df.columns, grid_df.index)
 
@@ -163,6 +288,89 @@ class DataManipulator:
         fig.colorbar(contour)
         return fig, ax
 
+    def plot_3d(
+        self,
+        x_col: str,
+        y_col: str,
+        z_col: str,
+        *,
+        data_df: Optional[pd.DataFrame] = None,
+        loc: Optional[tuple[int, ...] | int] = None,
+        label: Optional[str] = None,
+        plot_type: Literal["surface", "scatter", "line"] = "surface",
+        cmap: str | Colormap = "viridis",
+        alpha: float = 1.0,
+        view_init: Optional[tuple[float, float]] = None,
+    ) -> tuple[Figure, Axes]:
+        """
+        Create a 3D plot of the data.
+
+        Args:
+            x_col: The column name for the x-axis data
+            y_col: The column name for the y-axis data
+            z_col: The column name for the z-axis data
+            data_df: The dataframe containing the data. If None, will use get_datas
+            loc: The location of the data in the ObjectArray
+            label: The label for the data
+            fig: The figure to plot on. If None, a new figure will be created
+            ax: The axes to plot on. If None, new axes will be created
+            plot_type: The type of 3D plot to create ("surface", "scatter", or "line")
+            cmap: The colormap to use for surface plots
+            alpha: The transparency of the plot
+            view_init: Initial viewing angle (elevation, azimuth) in degrees
+
+        Returns:
+            tuple: The figure and axes objects
+        """
+
+        if data_df is None:
+            data_df = self.get_datas(loc=loc, label=label, concat=True)
+
+            fig = plt.figure(figsize=(12, 10))
+            ax = fig.add_subplot(111, projection='3d')
+
+        x_data = data_df[x_col].values
+        y_data = data_df[y_col].values
+        z_data = data_df[z_col].values
+
+        if plot_type == "surface":
+            # For surface plots, we need to reshape the data into a grid
+            # First, get unique x and y values
+            x_unique = np.sort(np.unique(x_data))
+            y_unique = np.sort(np.unique(y_data))
+            
+            # Create a grid of x and y values
+            X, Y = np.meshgrid(x_unique, y_unique)
+            
+            # Create a grid for Z values
+            Z = np.zeros_like(X)
+            
+            # Fill the Z grid with values from the dataframe
+            for i, x_val in enumerate(x_unique):
+                for j, y_val in enumerate(y_unique):
+                    mask = (x_data == x_val) & (y_data == y_val)
+                    if np.any(mask):
+                        Z[j, i] = z_data[mask][0]
+            
+            surf = ax.plot_surface(X, Y, Z, cmap=cmap, alpha=alpha)
+            fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
+            
+        elif plot_type == "scatter":
+            scatter = ax.scatter(x_data, y_data, z_data, c=z_data, cmap=cmap, alpha=alpha)
+            fig.colorbar(scatter, ax=ax, shrink=0.5, aspect=5)
+            
+        elif plot_type == "line":
+            ax.plot(x_data, y_data, z_data, alpha=alpha)
+        
+        ax.set_xlabel(x_col)
+        ax.set_ylabel(y_col)
+        ax.set_zlabel(z_col)
+        
+        if view_init is not None:
+            ax.view_init(elev=view_init[0], azim=view_init[1])
+        
+        return fig, ax
+    
     @staticmethod
     def load_settings(usetex: bool = False, usepgf: bool = False) -> None:
         """load the settings for matplotlib saved in another file"""
@@ -176,6 +384,18 @@ class DataManipulator:
 
         config_module = importlib.import_module(file_name)
         DataManipulator.legend_font = getattr(config_module, "legend_font")
+
+    @staticmethod
+    def ax_legend(ax: Axes, lst_artists: list[Line2D | Patch]) -> None:
+        """
+        add the legend to the axes
+        """
+        ax.legend(
+            handles=lst_artists,
+            labels=[artist.get_label() for artist in lst_artists],
+            edgecolor="black",
+            prop=DataManipulator.legend_font,
+        )
 
     @staticmethod
     def paint_colors_twin_axes(
@@ -232,6 +452,10 @@ class DataManipulator:
             hspace=sub_adj[5],
         )
         return fig, ax, PlotParam(n_row, n_col, lines_per_fig)
+
+    #################
+    # dynamic plots #
+    #################
 
     def live_plot_init(
         self,
@@ -568,6 +792,10 @@ class DataManipulator:
         if not is_notebook() and not incremental:
             self.go_f.update_layout(uirevision=True)
             time.sleep(0.5)
+
+    ##########################
+    # color selection method #
+    ##########################
 
     @staticmethod
     def sel_pan_color(

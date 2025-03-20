@@ -10,34 +10,47 @@ logger = get_logger(__name__)
 
 class ObjectArray:
     """
-    This class is used to store the objects as a multi-dimensional array
+    This class is used to store the objects as a multi-dimensional array.
+
+    The ObjectArray provides a way to store objects in a multi-dimensional structure
+    with methods for accessing, manipulating, and extending the array.
+    NOTE: getter supports flattened indexing, but setter does not
+
+    Attributes:
+        shape (tuple[int, ...]): The dimensions of the array
+        fill_value (any): The default value used to fill the array
+        unique (bool): If True, ensures all elements in the array are unique
     """
 
-    def __init__(self, *dims: int) -> None:
+    def __init__(self, *dims: int, fill_value: any = None, unique: bool = False) -> None:
         """
-        initialize the ObjectArray
+        initialize the ObjectArray with certain dimensions and fill value (note to copy the fill value except for special cases)
 
         Args:
-        - dims: the dimensions of the objects
+            *dims: The dimensions of the objects
+            fill_value: The value to fill the array with
+            unique: If True, ensures all elements in the array are unique
         """
         self.shape = dims
-        self.objects = self._create_objects(dims)  # customized initialization can be implemented by overriding this method
+        self.fill_value = fill_value
+        self.unique = unique
+        self.objects = self._create_objects(dims) # customized initialization can be implemented by overriding this method
 
     def __repr__(self) -> str:
         """
         Return a string representation of the ObjectArray.
-        
+
         This method is called when the instance is directly referenced in a print statement
         or when it's evaluated in an interactive shell.
-        
+
         Returns:
             str: A formatted string representation of all elements in the ObjectArray.
         """
         flat_objects = self._flatten(self.objects)
-        
+
         # Create a formatted representation
         result = f"ObjectArray(shape={self.shape})\n"
-        
+
         # Add elements with their indices
         for i, obj in enumerate(flat_objects):
             # Calculate multi-dimensional indices
@@ -46,16 +59,16 @@ class ObjectArray:
             for dim in reversed(self.shape):
                 indices.insert(0, remaining % dim)
                 remaining //= dim
-            
+
             # Format the element representation
-            obj_repr = str(obj).replace('\n', '\n  ')  # Indent any multi-line representations
+            obj_repr = str(obj).replace(
+                "\n", "\n  "
+            )  # Indent any multi-line representations
             result += f"  {tuple(indices)}: {obj_repr}\n"
-        
+
         return result
-    
-    def _create_objects(
-        self, dims: tuple[int, ...]
-    ) -> list[any]:
+
+    def _create_objects(self, dims: tuple[int, ...]) -> list[any]:
         """
         create the list of objects
         override this method to customize the initialization
@@ -65,7 +78,7 @@ class ObjectArray:
         - dims: the dimensions of the objects
         """
         if len(dims) == 1:
-            return [None for _ in range(dims[0])]
+            return [self.fill_value for _ in range(dims[0])]
         else:
             return [self._create_objects(dims[1:]) for _ in range(dims[0])]
 
@@ -78,7 +91,9 @@ class ObjectArray:
         else:
             return self._get_subarray(array[index[0]], index[1:])
 
-    def _set_subarray(self, array, index: tuple[int, ...], target_df: pd.DataFrame) -> None:
+    def _set_subarray(
+        self, array, index: tuple[int, ...], target_df: pd.DataFrame
+    ) -> None:
         """
         set the subarray of the dataframes assignated by the index
         """
@@ -114,26 +129,196 @@ class ObjectArray:
             result = result[0]
         return result
 
-    def __setitem__(self, index: tuple[int, ...] | int, value):
+    def _are_equal(self, obj1: any, obj2: any) -> bool:
+        """
+        Compare two objects for equality using appropriate method based on type.
+
+        Args:
+            obj1: First object to compare
+            obj2: Second object to compare
+
+        Returns:
+            bool: True if objects are considered equal, False otherwise
+        """
+        # Handle None values
+        if obj1 is None and obj2 is None:
+            return True
+        if obj1 is None or obj2 is None:
+            return False
+
+        # Handle numpy arrays
+        if isinstance(obj1, np.ndarray) and isinstance(obj2, np.ndarray):
+            return np.array_equal(obj1, obj2)
+
+        # Handle pandas objects
+        if isinstance(obj1, pd.DataFrame) and isinstance(obj2, pd.DataFrame):
+            return obj1.equals(obj2)
+        if isinstance(obj1, pd.Series) and isinstance(obj2, pd.Series):
+            return obj1.equals(obj2)
+
+        # For other objects, try equality comparison
+        try:
+            return obj1 == obj2
+        except Exception as e:
+            logger.warning("Equality comparison failed: %s. Using identity comparison.", e)
+            return obj1 is obj2
+
+    def _validate_uniqueness(self, value: any, current_index: tuple[int, ...]) -> bool:
+        """
+        Validate that the new value maintains uniqueness in the array.
+
+        Args:
+            value: The value to check for uniqueness
+            current_index: The index where the value would be inserted
+
+        Returns:
+            bool: True if the value is unique (or not required uniqueness), False otherwise
+        """
+        if not self.unique:
+            return True
+
+        locations = self.find(value)
+        # Filter out the current index from locations if it exists
+        other_locations = [loc for loc in locations if loc != current_index]
+        
+        if other_locations:
+            return False
+
+    def __setitem__(self, index: tuple[int, ...] | int, value: any) -> None:
+        """
+        Set the value at the specified index.
+
+        Args:
+            index: The index where to set the value
+            value: The value to set
+
+        Raises:
+            ValueError: If unique is True and the value already exists in the array
+        """
         if isinstance(index, int):
             index = (index,)
+        
+        self._validate_uniqueness(value, index)
         self._set_subarray(self.objects, index, value)
 
+    def extend(self, *dims: int) -> None:
+        """
+        Extend the array to a new shape, filling extended elements with None.
 
-def rename_duplicates(columns: list[str]) -> list[str]:
-    """
-    rename the duplicates with numbers (like ["V","V"] to ["V1","V2"])
-    """
-    count_dict = {}
-    renamed_columns = []
-    for col in columns:
-        if col in count_dict:
-            count_dict[col] += 1
-            renamed_columns.append(f"{col}{count_dict[col]}")
-        else:
-            count_dict[col] = 1
-            renamed_columns.append(col)
-    return renamed_columns
+        This method extends the array to the specified dimensions while preserving
+        the existing elements. If any of the new dimensions is smaller than the
+        current dimensions, an error is raised.
+
+        Args:
+            *dims: The new dimensions for the array
+        """
+        # Check if new dimensions are valid (not smaller than current)
+        logger.validate(
+            len(dims) == len(self.shape),
+            "Expected {len(self.shape)} dimensions, got {len(dims)}",
+        )
+
+        for i, (current, new) in enumerate(zip(self.shape, dims)):
+            logger.validate(
+                new >= current,
+                f"New dimension {i} ({new}) is smaller than current dimension ({current})",
+            )
+
+        # If dimensions are the same, no need to extend
+        if dims == self.shape:
+            return
+
+        # Create a new array with the extended dimensions
+        new_objects = self._create_objects(dims)
+
+        # Copy existing elements to the new array
+        self._copy_elements(self.objects, new_objects, self.shape)
+
+        # Update shape and objects
+        self.shape = dims
+        self.objects = new_objects
+
+    def _copy_elements(
+        self,
+        source: list,
+        target: list,
+        source_shape: tuple[int, ...],
+        source_idx: tuple = (),
+        target_idx: tuple = (),
+    ) -> None:
+        """
+        Recursively copy elements from source array to target array.
+
+        Args:
+            source: Source array to copy from
+            target: Target array to copy to
+            source_shape: Shape of the source array
+            source_idx: Current index in source array (for recursion)
+            target_idx: Current index in target array (for recursion)
+        """
+        if len(source_idx) == len(source_shape):
+            # We've reached the elements, copy the value
+            self._set_subarray(
+                target, target_idx, self._get_subarray(source, source_idx)
+            )
+            return
+
+        # Get current dimension
+        dim_idx = len(source_idx)
+
+        # Recursively copy elements for this dimension
+        for i in range(source_shape[dim_idx]):
+            self._copy_elements(
+                source, target, source_shape, source_idx + (i,), target_idx + (i,)
+            )
+
+    def find(self, search_value: any) -> list[tuple[int, ...]]:
+        """
+        Find all locations of a given object in the array. Only supports one object at a time.
+
+        Args:
+            search_value: The object to search for in the array.
+
+        Returns:
+            list[tuple[int, ...]]: A list of tuples containing the indices where the value was found.
+                                 Each tuple represents the multi-dimensional index location.
+        """
+        flat_objects = self._flatten(self.objects)
+        found_indices = []
+
+        # Find all matching indices in flattened array
+        for i, obj in enumerate(flat_objects):
+            if self._are_equal(obj, search_value):
+                # Calculate multi-dimensional indices
+                indices = []
+                remaining = i
+                for dim in reversed(self.shape):
+                    indices.insert(0, remaining % dim)
+                    remaining //= dim
+                found_indices.append(tuple(indices))
+
+        return found_indices
+
+    def find_objs(self, search_values: Sequence[any] | any) -> list[tuple[int, ...]]:
+        """
+        Find locations of given objects in the tuple or list(if multiple locations are found, only the first one will be returned). Supports multiple objects at a time.
+        """
+        if not isinstance(search_values, (tuple, list)):
+            search_values = (search_values,)
+        flat_objects = self._flatten(self.objects)
+        found_indices = []
+        for search_value in search_values:
+            for i, obj in enumerate(flat_objects):
+                if self._are_equal(obj, search_value):
+                    # Calculate multi-dimensional indices
+                    indices = []
+                    remaining = i
+                    for dim in reversed(self.shape):
+                        indices.insert(0, remaining % dim)
+                        remaining //= dim
+                    found_indices.append(tuple(indices))
+                    break
+        return found_indices
 
 
 class CacheArray:
@@ -180,6 +365,22 @@ class CacheArray:
             return {"cache": self.cache, "mean": self.mean, "if_stable": var_stable}
         else:
             return {"mean": self.mean, "if_stable": var_stable}
+
+
+def rename_duplicates(columns: list[str]) -> list[str]:
+    """
+    rename the duplicates with numbers (like ["V","V"] to ["V1","V2"])
+    """
+    count_dict = {}
+    renamed_columns = []
+    for col in columns:
+        if col in count_dict:
+            count_dict[col] += 1
+            renamed_columns.append(f"{col}{count_dict[col]}")
+        else:
+            count_dict[col] = 1
+            renamed_columns.append(col)
+    return renamed_columns
 
 
 def match_with_tolerance(
