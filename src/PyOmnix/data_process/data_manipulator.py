@@ -25,7 +25,7 @@ from plotly.subplots import make_subplots
 import numpy as np
 import pandas as pd
 
-from .utils import (
+from ..utils import (
     CM_TO_INCH,
     factor,
     is_notebook,
@@ -34,7 +34,7 @@ from .utils import (
     ObjectArray,
     get_unit_factor_and_texname,
 )
-from .omnix_logger import get_logger
+from ..omnix_logger import get_logger
 
 logger = get_logger(__name__)
 

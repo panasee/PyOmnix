@@ -47,6 +47,22 @@ class OmnixLogger(logging.Logger):
         if self.isEnabledFor(LoggerConfig.TRACE):
             self.log(LoggerConfig.TRACE, msg, *args, **kwargs)
 
+    def raise_error(
+        self,
+        message: str,
+        exception_type: Type[Exception],
+        log_level: int = logging.ERROR,
+        include_traceback: bool = True,
+    ) -> None:
+        """
+        Log an error and raise an exception.
+        """
+        log_message = message if message is not None else str(exception_type)
+
+        self.log(log_level, log_message, exc_info=include_traceback)
+
+        raise exception_type(log_message)
+
     def validate(
         self,
         condition: bool,
