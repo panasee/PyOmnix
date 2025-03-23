@@ -1,6 +1,7 @@
 import copy
 from collections.abc import Sequence
 from itertools import groupby
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -20,11 +21,11 @@ class ObjectArray:
 
     Attributes:
         shape (tuple[int, ...]): The dimensions of the array
-        fill_value (any): The default value used to fill the array
+        fill_value (Any): The default value used to fill the array
         unique (bool): If True, ensures all elements in the array are unique
     """
 
-    def __init__(self, *dims: int, fill_value: any = None, unique: bool = False) -> None:
+    def __init__(self, *dims: int, fill_value: Any = None, unique: bool = False) -> None:
         """
         initialize the ObjectArray with certain dimensions and fill value (note to copy the fill value except for special cases)
 
@@ -70,7 +71,7 @@ class ObjectArray:
 
         return result
 
-    def _create_objects(self, dims: tuple[int, ...]) -> list[any]:
+    def _create_objects(self, dims: tuple[int, ...]) -> list[Any]:
         """
         create the list of objects
         override this method to customize the initialization
@@ -131,7 +132,7 @@ class ObjectArray:
             result = result[0]
         return result
 
-    def _are_equal(self, obj1: any, obj2: any) -> bool:
+    def _are_equal(self, obj1: Any, obj2: Any) -> bool:
         """
         Compare two objects for equality using appropriate method based on type.
 
@@ -165,7 +166,7 @@ class ObjectArray:
             logger.warning("Equality comparison failed: %s. Using identity comparison.", e)
             return obj1 is obj2
 
-    def _validate_uniqueness(self, value: any, current_index: tuple[int, ...]) -> bool:
+    def _validate_uniqueness(self, value: Any, current_index: tuple[int, ...]) -> bool:
         """
         Validate that the new value maintains uniqueness in the array.
 
@@ -186,7 +187,7 @@ class ObjectArray:
         if other_locations:
             return False
 
-    def __setitem__(self, index: tuple[int, ...] | int, value: any) -> None:
+    def __setitem__(self, index: tuple[int, ...] | int, value: Any) -> None:
         """
         Set the value at the specified index.
 
@@ -274,7 +275,7 @@ class ObjectArray:
                 source, target, source_shape, source_idx + (i,), target_idx + (i,)
             )
 
-    def find(self, search_value: any) -> list[tuple[int, ...]]:
+    def find(self, search_value: Any) -> list[tuple[int, ...]]:
         """
         Find all locations of a given object in the array. Only supports one object at a time.
 
@@ -301,7 +302,7 @@ class ObjectArray:
 
         return found_indices
 
-    def find_objs(self, search_values: Sequence[any] | any) -> list[tuple[int, ...]]:
+    def find_objs(self, search_values: Sequence[Any] | Any) -> list[tuple[int, ...]]:
         """
         Find locations of given objects in the tuple or list(if multiple locations are found, only the first one will be returned). Supports multiple objects at a time.
         """
@@ -389,7 +390,7 @@ def match_with_tolerance(
     df1: pd.DataFrame,
     df2: pd.DataFrame,
     *,
-    target_axis: any,
+    target_axis: Any,
     tolerance: float,
     suffixes: tuple[str] = ("_1", "_2"),
 ) -> pd.DataFrame:

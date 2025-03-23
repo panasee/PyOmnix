@@ -12,7 +12,7 @@ HPLANCK = 6.626 * 10 ** (-34)  # SI unit: J*s
 HBAR = HPLANCK / 2 / np.pi
 HBAR_THZ = HBAR * 10**12  # SI unit: J*s -> THz
 KB = 1.38 * 10 ** (-23)  # SI unit: J/K
-UNIT_FACTOR_FROMSI = {
+UNIT_FACTOR_FROM_SI = {
     "": 1,
     "f": 1e15,
     "p": 1e12,
@@ -78,8 +78,8 @@ def factor(unit: str, mode: str = "from_SI"):
     if len(unit) <= 1:
         return 1
     if mode == "from_SI":
-        if unit[0] in UNIT_FACTOR_FROMSI:
-            return UNIT_FACTOR_FROMSI.get(unit[0])
+        if unit[0] in UNIT_FACTOR_FROM_SI:
+            return UNIT_FACTOR_FROM_SI.get(unit[0])
         else:
             return 1
     if mode == "to_SI":

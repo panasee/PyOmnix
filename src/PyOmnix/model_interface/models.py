@@ -164,9 +164,7 @@ class ModelConfig:
         with open(self.config_json, "w", encoding="utf-8") as f:
             json.dump(self.config, f, indent=4)
 
-    def set_api_config(
-        self, provider: str, *, api_key: str | None, api_url: str | None
-    ) -> None:
+    def set_api_config(self, provider: str, *, api_key: str | None, api_url: str | None) -> None:
         """
         Set/Add the API key and URL for a specific provider.
 
@@ -322,18 +320,20 @@ class ChatMessages(ChatMessagesRaw):
         str,
         Field(
             description="The name of the file to sync the messages to",
-            default=f"chat_messages_{datetime.now().strftime('%Y%m%d_%H%S')}.txt",
+            default=f"chat_messages_{datetime.now().strftime('%Y%m%d_%H%M')}",
         ),
     ]
     trimed_file_name: Annotated[
         str,
         Field(
             description="The name of the file to sync the trimmed messages to",
-            default=f"trimed_chat_messages_{datetime.now().strftime('%Y%m%d_%H%S')}.txt",
+            default=f"trimed_chat_messages_{datetime.now().strftime('%Y%m%d_%H%M')}",
         ),
     ]
     file_path: Path | None = None
+    json_file_path: Path | None = None
     trimed_file_path: Path | None = None
+    trimed_json_file_path: Path | None = None
     trimed_messages: Annotated[
         list[AnyMessage],
         Field(description="The list of trimmed messages", default_factory=list),
@@ -346,8 +346,14 @@ class ChatMessages(ChatMessagesRaw):
         # used to store the trimmed messages
         if self.file_sync:
             (OMNIX_PATH / "chat_files").mkdir(parents=True, exist_ok=True)
-            self.file_path = OMNIX_PATH / "chat_files" / self.file_name
-            self.trimed_file_path = OMNIX_PATH / "chat_files" / self.trimed_file_name
+            self.file_path = (OMNIX_PATH / "chat_files" / self.file_name).with_suffix(".txt")
+            self.json_file_path = (OMNIX_PATH / "chat_files" / self.file_name).with_suffix(".json")
+            self.trimed_file_path = (OMNIX_PATH / "chat_files" / self.trimed_file_name).with_suffix(
+                ".txt"
+            )
+            self.trimed_json_file_path = (
+                OMNIX_PATH / "chat_files" / self.trimed_file_name
+            ).with_suffix(".json")
             self._sync_to_file()
 
     @field_validator("messages", mode="before")
@@ -421,20 +427,30 @@ class ChatMessages(ChatMessagesRaw):
         return self
 
     def _sync_to_file(self) -> None:
-        """Sync current messages to the file."""
+        """Sync current messages to two files,
+        one for human readable, one for machine readable (json)."""
         if not self.file_sync or self.file_path is None:
             return
 
         with open(self.file_path, "w", encoding="utf-8") as f:
-            for msg in self.messages:
-                role = msg.__class__.__name__.replace("Message", "").lower()
-                if isinstance(msg.content, str):
-                    content = msg.content
-                else:
-                    content = str(msg.content)  # Basic serialization for complex content
-                f.write(
-                    f"{role}\n\t Reasoning: {msg.additional_kwargs.get('reasoning_content', '')}\n\t Content: {content}\n"
-                )
+            with open(self.json_file_path, "w", encoding="utf-8") as f_json:
+                for msg in self.messages:
+                    role = msg.__class__.__name__.replace("Message", "").lower()
+                    if isinstance(msg.content, str):
+                        content = msg.content
+                    else:
+                        content = str(msg.content)  # Basic serialization for complex content
+                    f.write(
+                        f"{role}\n\t Reasoning: {msg.additional_kwargs.get('reasoning_content', '')}\n\t Content: {content}\n"
+                    )
+                    # Write JSON with proper formatting between messages
+                    if msg != self.messages[0]:
+                        f_json.write(",\n")  # Add comma between JSON objects
+                    else:
+                        f_json.write("[\n")  # Start JSON array for first message
+                    f_json.write(msg.model_dump_json())
+                    if msg == self.messages[-1]:
+                        f_json.write("\n]")  # Close JSON array after last message
 
     def _sync_to_trimed_file(self) -> None:
         """Sync current trimmed messages to the file."""
@@ -442,30 +458,38 @@ class ChatMessages(ChatMessagesRaw):
             return
 
         with open(self.trimed_file_path, "w", encoding="utf-8") as f:
-            for msg in self.trimed_messages:
-                role = msg.__class__.__name__.replace("Message", "").lower()
-                if isinstance(msg.content, str):
-                    content = msg.content
-                else:
-                    content = str(msg.content)  # Basic serialization for complex content
-                f.write(
-                    f"{role}\n\t Reasoning: {msg.additional_kwargs.get('reasoning_content', '')}\n\t Content: {content}\n"
-                )
+            with open(self.trimed_json_file_path, "w", encoding="utf-8") as f_json:
+                for msg in self.trimed_messages:
+                    role = msg.__class__.__name__.replace("Message", "").lower()
+                    if isinstance(msg.content, str):
+                        content = msg.content
+                    else:
+                        content = str(msg.content)  # Basic serialization for complex content
+                    f.write(
+                        f"{role}\n\t Reasoning: {msg.additional_kwargs.get('reasoning_content', '')}\n\t Content: {content}\n"
+                    )
+                    # Write JSON with proper formatting between messages
+                    if msg != self.trimed_messages[0]:
+                        f_json.write(",\n")  # Add comma between JSON objects
+                    else:
+                        f_json.write("[\n")  # Start JSON array for first message
+                    f_json.write(msg.model_dump_json())
+                    if msg == self.trimed_messages[-1]:
+                        f_json.write("\n]")  # Close JSON array after last message
 
     def load_from_file(self) -> None:
-        """Load messages from the sync file."""
-        if not self.file_sync or self.file_path is None:
+        """Load messages from the json file."""
+        if not self.file_sync or self.json_file_path is None:
             return
 
-        if not os.path.exists(self.file_path):
+        if not os.path.exists(self.json_file_path):
             return
 
         self.messages.clear()
-        with open(self.file_path, encoding="utf-8") as f:
-            for line in f:
-                role, content = line.strip().split(": ", 1)
-                message_dict = ChatMessageDict(role=role, content=content)
-                self.messages.append(message_dict.to_langchain_message())
+        with open(self.json_file_path, encoding="utf-8") as f:
+            data = json.load(f)
+            for msg in data:
+                self.messages.append(ChatMessageDict(**msg).to_langchain_message())
         self.final_check = False
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -654,10 +678,8 @@ class ChatMessages(ChatMessagesRaw):
             elif isinstance(message.content, list):
                 # For multimodal content
                 for item in message.content:
-                    if (
-                        isinstance(item, str)
-                        or (isinstance(item, dict)
-                        and item.get("type") == "text")
+                    if isinstance(item, str) or (
+                        isinstance(item, dict) and item.get("type") == "text"
                     ):
                         text = item if isinstance(item, str) else item.get("text", "")
                         content_tokens += len(encoding.encode(text))

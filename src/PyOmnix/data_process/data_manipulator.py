@@ -372,7 +372,7 @@ class DataManipulator:
     @staticmethod
     def load_settings(usetex: bool = False, usepgf: bool = False) -> None:
         """load the settings for matplotlib saved in another file"""
-        file_name = "PyOmnix.pltconfig.plot_config"
+        file_name = "pyomnix.pltconfig.plot_config"
         if usetex:
             file_name += "_tex"
             if usepgf:
@@ -782,7 +782,8 @@ class DataManipulator:
         data_extract: bool = False,
         external_file: str | Path | None = None,
     ) -> (
-        tuple[tuple[float | int, ...], str] | None
+        tuple[tuple[float | int, ...], str]
+        | None
         | tuple[list[list[tuple[float | int, ...]]], dict]
     ):
         """

@@ -22,7 +22,7 @@ from .math import (
     HPLANCK,
     KB,
     SWITCH_DICT,
-    UNIT_FACTOR_FROMSI,
+    UNIT_FACTOR_FROM_SI,
     UNIT_FACTOR_TO_SI,
     combined_generator_list,
     constant_generator,
