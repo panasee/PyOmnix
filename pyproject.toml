@@ -4,12 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyomnix"
-version = "0.1b1"
+version = "0.1b0"
 description = "Integrated Tools for Scientific Computing, Data Analysis, and AI Development"
 authors = [
-    {name = "Dongkai", email = "dongkai001@e.ntu.edu.sg"}
-]
-maintainers = [
     {name = "Dongkai", email = "dongkai001@e.ntu.edu.sg"}
 ]
 readme = "README.md"
@@ -34,7 +31,7 @@ keywords = [
     "visualization",
     "workflow",
 ]
-urls = {Homepage = "https://github.com/yourusername/pyomnix", Repository = "https://github.com/yourusername/pyomnix.git"}
+urls = {Homepage = "https://github.com/panasee/PyOmnix", Repository = "https://github.com/panasee/PyOmnix.git"}
 dependencies = [
     "numpy",
     "pandas",

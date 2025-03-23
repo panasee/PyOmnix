@@ -4,34 +4,35 @@ It allows adding, removing, and retrieving API keys and URLs for various provide
 The configuration is stored in a JSON file and can be manually edited.
 """
 
-import json
-import os
+import base64
 import importlib
 import io
-import base64
+import json
+import os
+from collections.abc import Generator
+from datetime import datetime
 from functools import partial
-from typing import Optional, Generator, Any
 from pathlib import Path
-from PIL import Image
+from typing import Annotated, Any, Optional
+
+import tiktoken
 from langchain_core.messages import (
     AIMessage,
+    AnyMessage,
+    BaseMessage,
+    ChatMessage,
+    FunctionMessage,
     HumanMessage,
     SystemMessage,
-    BaseMessage,
     ToolMessage,
-    FunctionMessage,
-    ChatMessage,
-    AnyMessage,
 )
 from langchain_core.runnables import Runnable
 from langgraph.graph import add_messages
+from PIL import Image
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing_extensions import Annotated
-import tiktoken
-from datetime import datetime
 
+from pyomnix.consts import OMNIX_PATH, SUMMARIZE_PROMPT_HUMAN, SUMMARIZE_PROMPT_SYS
 from pyomnix.omnix_logger import get_logger
-from pyomnix.consts import SUMMARIZE_PROMPT_SYS, SUMMARIZE_PROMPT_HUMAN, OMNIX_PATH
 
 logger = get_logger(__name__)
 
@@ -79,7 +80,7 @@ class ModelConfig:
     def _load_config(self) -> None:
         """Load the configuration from the JSON file if it exists."""
         if self.config_json.exists():
-            with open(self.config_json, "r", encoding="utf-8") as f:
+            with open(self.config_json, encoding="utf-8") as f:
                 self.config = json.load(f)
         else:
             logger.info(
@@ -164,7 +165,7 @@ class ModelConfig:
             json.dump(self.config, f, indent=4)
 
     def set_api_config(
-        self, provider: str, *, api_key: Optional[str], api_url: Optional[str]
+        self, provider: str, *, api_key: str | None, api_url: str | None
     ) -> None:
         """
         Set/Add the API key and URL for a specific provider.
@@ -182,7 +183,7 @@ class ModelConfig:
             self.config[provider]["api_url"] = api_url
         self.save_config()
 
-    def get_api_config(self, provider: str) -> Optional[tuple[str, str]]:
+    def get_api_config(self, provider: str) -> tuple[str, str] | None:
         """
         Get the API key for a specific provider.
 
@@ -249,8 +250,8 @@ class ChatMessageDict(BaseModel):
         examples=["system", "user", "human", "assistant", "tool", "function"],
     )
     content: str | list
-    tool_call_id: Optional[str] = None
-    name: Optional[str] = None
+    tool_call_id: str | None = None
+    name: str | None = None
 
     def to_langchain_message(self) -> AnyMessage:
         """Convert to appropriate LangChain message type."""
@@ -331,8 +332,8 @@ class ChatMessages(ChatMessagesRaw):
             default=f"trimed_chat_messages_{datetime.now().strftime('%Y%m%d_%H%S')}.txt",
         ),
     ]
-    file_path: Optional[Path] = None
-    trimed_file_path: Optional[Path] = None
+    file_path: Path | None = None
+    trimed_file_path: Path | None = None
     trimed_messages: Annotated[
         list[AnyMessage],
         Field(description="The list of trimmed messages", default_factory=list),
@@ -460,7 +461,7 @@ class ChatMessages(ChatMessagesRaw):
             return
 
         self.messages.clear()
-        with open(self.file_path, "r", encoding="utf-8") as f:
+        with open(self.file_path, encoding="utf-8") as f:
             for line in f:
                 role, content = line.strip().split(": ", 1)
                 message_dict = ChatMessageDict(role=role, content=content)
@@ -655,8 +656,8 @@ class ChatMessages(ChatMessagesRaw):
                 for item in message.content:
                     if (
                         isinstance(item, str)
-                        or isinstance(item, dict)
-                        and item.get("type") == "text"
+                        or (isinstance(item, dict)
+                        and item.get("type") == "text")
                     ):
                         text = item if isinstance(item, str) else item.get("text", "")
                         content_tokens += len(encoding.encode(text))
@@ -701,10 +702,10 @@ class ChatRequest(BaseModel):
     model_name: Annotated[str, Field(description="The exact model name within the provider")]
     messages: list[ChatMessages]  # to be able to do batching
     stream: bool = False
-    invoke_config: Optional[dict[str, str]] = None
+    invoke_config: dict[str, str] | None = None
     temperature: float = 0.7
-    max_tokens: Optional[int] = None
-    timeout: Optional[int] = None
+    max_tokens: int | None = None
+    timeout: int | None = None
     max_retries: int = 2
 
     @field_validator("messages", mode="before")
@@ -791,10 +792,10 @@ class RawModels:
         *,
         stream: bool = False,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-        timeout: Optional[int] = None,
+        max_tokens: int | None = None,
+        timeout: int | None = None,
         max_retries: int = 2,
-        invoke_config: Optional[dict[str, Any]] = None,
+        invoke_config: dict[str, Any] | None = None,
         **kwargs,
     ) -> dict | Generator[dict, None, None]:
         """
@@ -845,7 +846,7 @@ class RawModels:
         model: str,
         texts: str | list[str | AnyMessage],
         images: list[str | Path | Image.Image] | list[list[str | Path | Image.Image]],
-        system_messages: Optional[str | list[str | AnyMessage]] = None,
+        system_messages: str | list[str | AnyMessage] | None = None,
         stream: bool = False,
         **kwargs,
     ) -> str:

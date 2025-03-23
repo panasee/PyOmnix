@@ -1,8 +1,10 @@
-from typing import Optional, Sequence
+import copy
+from collections.abc import Sequence
 from itertools import groupby
+
 import numpy as np
 import pandas as pd
-import copy
+
 from ..omnix_logger import get_logger
 
 logger = get_logger(__name__)
@@ -218,7 +220,7 @@ class ObjectArray:
             "Expected {len(self.shape)} dimensions, got {len(dims)}",
         )
 
-        for i, (current, new) in enumerate(zip(self.shape, dims)):
+        for i, (current, new) in enumerate(zip(self.shape, dims, strict=False)):
             logger.validate(
                 new >= current,
                 f"New dimension {i} ({new}) is smaller than current dimension ({current})",
@@ -345,7 +347,7 @@ class CacheArray:
         self.mean = self.cache.mean()
 
     def get_status(
-        self, *, require_cache: bool = False, var_crit: Optional[float] = None
+        self, *, require_cache: bool = False, var_crit: float | None = None
     ) -> dict[str, float | Sequence[float] | bool] | None:
         """
         return the cache, mean value, and whether the cache is stable

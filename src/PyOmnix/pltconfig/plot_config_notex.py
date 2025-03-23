@@ -5,7 +5,6 @@ This file is for normal matplotlib plots, no tex rendering.
 
 import matplotlib.pyplot as plt
 
-
 # mpl.use("pgf")
 plt.rcParams.update(
     {

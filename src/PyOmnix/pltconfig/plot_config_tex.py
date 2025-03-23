@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 
-
 plt.rcParams.update(
     {
         "text.usetex": True,

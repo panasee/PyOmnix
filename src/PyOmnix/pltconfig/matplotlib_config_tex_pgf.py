@@ -3,9 +3,8 @@ This file is for tex rendering matplotlib plots, using pgf backend. Could render
 Note that pgf backend will not produce figures directly, use savefig to save the figures
 """
 
-import matplotlib.pyplot as plt
 import matplotlib as mpl
-
+import matplotlib.pyplot as plt
 
 mpl.use("pgf")
 plt.rcParams.update(

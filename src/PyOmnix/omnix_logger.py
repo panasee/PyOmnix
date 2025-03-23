@@ -15,10 +15,9 @@ all handlers are properly closed and resources are released.
 import logging
 import sys
 import traceback
-from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Type
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
+from pathlib import Path
 
 # Default logger instance
 DEFAULT_LOGGER = None
@@ -50,7 +49,7 @@ class OmnixLogger(logging.Logger):
     def raise_error(
         self,
         message: str,
-        exception_type: Type[Exception],
+        exception_type: type[Exception],
         log_level: int = logging.ERROR,
         include_traceback: bool = True,
     ) -> None:
@@ -67,7 +66,7 @@ class OmnixLogger(logging.Logger):
         self,
         condition: bool,
         message: str,
-        exception_type: Type[Exception] = AssertionError,
+        exception_type: type[Exception] = AssertionError,
         log_level: int = logging.ERROR,
     ) -> None:
         """
@@ -96,9 +95,9 @@ def setup_logger(
     *,
     name: str = LoggerConfig.DEFAULT_NAME,
     log_level: int = LoggerConfig.DEFAULT_LEVEL,
-    console_level: Optional[int] = None,
-    file_level: Optional[int] = None,
-    log_file: Optional[Path | str] = LoggerConfig.DEFAULT_LOG_FILE,
+    console_level: int | None = None,
+    file_level: int | None = None,
+    log_file: Path | str | None = LoggerConfig.DEFAULT_LOG_FILE,
     log_format: str = LoggerConfig.DEFAULT_FORMAT,
     date_format: str = LoggerConfig.DEFAULT_DATE_FORMAT,
     propagate: bool = False,
@@ -178,7 +177,7 @@ def setup_logger(
             # Set file handler level (use file_level if provided, otherwise use log_level)
             file_handler.setLevel(file_level if file_level is not None else log_level)
             new_logger.addHandler(file_handler)
-        except (IOError, PermissionError) as e:
+        except (OSError, PermissionError) as e:
             original_level = console_handler.level
             try:
                 console_handler.setLevel(logging.WARNING)
@@ -207,12 +206,12 @@ def setup_logger(
 
 
 def get_logger(
-    name: Optional[str] = None,
-    log_level: Optional[int] = LoggerConfig.DEFAULT_LEVEL,
+    name: str | None = None,
+    log_level: int | None = LoggerConfig.DEFAULT_LEVEL,
     *,
-    console_level: Optional[int] = logging.INFO,
-    file_level: Optional[int] = logging.DEBUG,
-    log_file: Optional[Path | str] = None,
+    console_level: int | None = logging.INFO,
+    file_level: int | None = logging.DEBUG,
+    log_file: Path | str | None = None,
 ) -> OmnixLogger:
     """
     Get an existing logger or create a new one if it doesn't exist.
@@ -244,7 +243,7 @@ class ExceptionHandler:
     """Handles exceptions and logs them appropriately"""
 
     # Map exception types to their log levels
-    EXCEPTION_LEVEL_MAP: Dict[Type[Exception], int] = {
+    EXCEPTION_LEVEL_MAP: dict[type[Exception], int] = {
         AssertionError: logging.ERROR,
         ValueError: logging.ERROR,
         TypeError: logging.ERROR,
@@ -259,7 +258,7 @@ class ExceptionHandler:
     EXIT_ON_CRITICAL = True
 
     @staticmethod
-    def get_log_level(exc_type: Type[Exception]) -> int:
+    def get_log_level(exc_type: type[Exception]) -> int:
         """Get the appropriate log level for an exception type"""
         if not issubclass(exc_type, Exception):
             return logging.CRITICAL
@@ -270,7 +269,7 @@ class ExceptionHandler:
 
     @staticmethod
     def format_exception(
-        exc_type: Type[Exception], exc_value: Exception, exc_traceback
+        exc_type: type[Exception], exc_value: Exception, exc_traceback
     ) -> str:
         """Format exception information into a string"""
         tb_lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
@@ -304,7 +303,7 @@ def custom_excepthook(exc_type, exc_value, exc_traceback):
 sys.excepthook = custom_excepthook
 
 
-def close_logger(name: Optional[str] = None) -> None:
+def close_logger(name: str | None = None) -> None:
     """
     Close all handlers for a logger to release file resources.
 

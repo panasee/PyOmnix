@@ -1,6 +1,8 @@
 import copy
+
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
+
 from ..omnix_logger import get_logger
 from ..pltconfig import color_preset as colors
 from .data import ObjectArray

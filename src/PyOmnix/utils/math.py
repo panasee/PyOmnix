@@ -1,9 +1,10 @@
 import re
+from collections.abc import Generator, Sequence
 from datetime import datetime
-from typing import Generator, Literal, Sequence, Optional
+from typing import Literal
+
 import numpy as np
 import pandas as pd
-
 
 # define constants
 CM_TO_INCH = 0.3937
@@ -218,7 +219,7 @@ def timestr_convert(
     t: pd.Series | Sequence[str] | np.ndarray,
     format_str: str = "%Y-%m-%d_%H:%M:%S.%f",
     *,
-    elapsed: Optional[Literal["sec", "min", "hour"]] = None,
+    elapsed: Literal["sec", "min", "hour"] | None = None,
 ) -> list[datetime] | list[float]:
     """
     Convert the time to datetime object, used to split time series without day information

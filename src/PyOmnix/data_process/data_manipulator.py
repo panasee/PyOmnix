@@ -2,39 +2,37 @@
 """This module is responsible for processing and plotting the data"""
 
 import importlib
-import copy
 import json
-import re
 import os
+import re
+import sys
 import threading
 import time
-import sys
+from collections.abc import Sequence
 from importlib import resources
 from pathlib import Path
-from typing import Optional, Literal, Sequence
+from typing import Literal
 
-from matplotlib.axes import Axes
-from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
-from matplotlib.colors import Colormap
-from matplotlib.patches import Patch
-from matplotlib.lines import Line2D
-from mpl_toolkits.mplot3d import Axes3D
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
+from matplotlib.axes import Axes
+from matplotlib.colors import Colormap
+from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+from plotly.subplots import make_subplots
 
+from ..omnix_logger import get_logger
 from ..utils import (
     CM_TO_INCH,
-    factor,
-    is_notebook,
-    hex_to_rgb,
-    PlotParam,
     ObjectArray,
+    PlotParam,
     get_unit_factor_and_texname,
+    hex_to_rgb,
+    is_notebook,
 )
-from ..omnix_logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -51,7 +49,7 @@ class DataManipulator:
     def __init__(
         self,
         *dims: int,
-        plot_params: Optional[tuple[int] | int] = None,
+        plot_params: tuple[int] | int | None = None,
         usetex: bool = False,
         usepgf: bool = False,
     ) -> None:
@@ -84,7 +82,7 @@ class DataManipulator:
         self.params = PlotParam(*plot_params)
         # dynamic plotting
         self.live_dfs: list[list[list[go.Scatter]]] = []
-        self.go_f: Optional[go.FigureWidget] = None
+        self.go_f: go.FigureWidget | None = None
         self._stop_event = threading.Event()
         self._thread = None
 
@@ -102,7 +100,7 @@ class DataManipulator:
         self,
         loc: tuple[Sequence[int], ...] | tuple[int, ...],
         data_in: Path | str | pd.DataFrame | Sequence[Path | str | pd.DataFrame],
-        label_in: Optional[str | Sequence[str]] = None,
+        label_in: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         """
@@ -128,7 +126,7 @@ class DataManipulator:
             "data_path and loc must have the same length",
         )
 
-        for path, loc, label in zip(data_in, loc, label_in):
+        for path, loc, label in zip(data_in, loc, label_in, strict=False):
             if isinstance(path, pd.DataFrame):
                 self.datas[*loc] = path
             else:
@@ -146,8 +144,8 @@ class DataManipulator:
     def get_datas(
         self,
         *,
-        loc: Optional[tuple[int, ...] | int] = None,
-        label: Optional[str | Sequence[str]] = None,
+        loc: tuple[int, ...] | int | None = None,
+        label: str | Sequence[str] | None = None,
         concat: bool = False,
     ) -> pd.DataFrame | list[pd.DataFrame]:
         """
@@ -227,10 +225,10 @@ class DataManipulator:
     def plot_df_cols(
         self,
         *,
-        data_df: Optional[pd.DataFrame] = None,
-        loc: Optional[tuple[int, ...] | int] = None,
-        label: Optional[str] = None,
-    ) -> Optional[tuple[Figure, Axes]]:
+        data_df: pd.DataFrame | None = None,
+        loc: tuple[int, ...] | int | None = None,
+        label: str | None = None,
+    ) -> tuple[Figure, Axes] | None:
         """
         plot all columns w.r.t. the first column(not index) in the dataframe. data_df, loc and label are mutually exclusive, with descending priority
 
@@ -256,11 +254,11 @@ class DataManipulator:
         mapping_y: any,
         mapping_val: any,
         *,
-        data_df: Optional[pd.DataFrame] = None,
-        loc: Optional[tuple[int, ...] | int] = None,
-        label: Optional[str] = None,
-        fig: Optional[Figure] = None,
-        ax: Optional[Axes] = None,
+        data_df: pd.DataFrame | None = None,
+        loc: tuple[int, ...] | int | None = None,
+        label: str | None = None,
+        fig: Figure | None = None,
+        ax: Axes | None = None,
         cmap: str | Colormap = "viridis",
     ) -> tuple[Figure, Axes]:
         """
@@ -294,13 +292,13 @@ class DataManipulator:
         y_col: str,
         z_col: str,
         *,
-        data_df: Optional[pd.DataFrame] = None,
-        loc: Optional[tuple[int, ...] | int] = None,
-        label: Optional[str] = None,
+        data_df: pd.DataFrame | None = None,
+        loc: tuple[int, ...] | int | None = None,
+        label: str | None = None,
         plot_type: Literal["surface", "scatter", "line"] = "surface",
         cmap: str | Colormap = "viridis",
         alpha: float = 1.0,
-        view_init: Optional[tuple[float, float]] = None,
+        view_init: tuple[float, float] | None = None,
     ) -> tuple[Figure, Axes]:
         """
         Create a 3D plot of the data.
@@ -327,7 +325,7 @@ class DataManipulator:
             data_df = self.get_datas(loc=loc, label=label, concat=True)
 
             fig = plt.figure(figsize=(12, 10))
-            ax = fig.add_subplot(111, projection='3d')
+            ax = fig.add_subplot(111, projection="3d")
 
         x_data = data_df[x_col].values
         y_data = data_df[y_col].values
@@ -338,39 +336,39 @@ class DataManipulator:
             # First, get unique x and y values
             x_unique = np.sort(np.unique(x_data))
             y_unique = np.sort(np.unique(y_data))
-            
+
             # Create a grid of x and y values
             X, Y = np.meshgrid(x_unique, y_unique)
-            
+
             # Create a grid for Z values
             Z = np.zeros_like(X)
-            
+
             # Fill the Z grid with values from the dataframe
             for i, x_val in enumerate(x_unique):
                 for j, y_val in enumerate(y_unique):
                     mask = (x_data == x_val) & (y_data == y_val)
                     if np.any(mask):
                         Z[j, i] = z_data[mask][0]
-            
+
             surf = ax.plot_surface(X, Y, Z, cmap=cmap, alpha=alpha)
             fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
-            
+
         elif plot_type == "scatter":
             scatter = ax.scatter(x_data, y_data, z_data, c=z_data, cmap=cmap, alpha=alpha)
             fig.colorbar(scatter, ax=ax, shrink=0.5, aspect=5)
-            
+
         elif plot_type == "line":
             ax.plot(x_data, y_data, z_data, alpha=alpha)
-        
+
         ax.set_xlabel(x_col)
         ax.set_ylabel(y_col)
         ax.set_zlabel(z_col)
-        
+
         if view_init is not None:
             ax.view_init(elev=view_init[0], azim=view_init[1])
-        
+
         return fig, ax
-    
+
     @staticmethod
     def load_settings(usetex: bool = False, usepgf: bool = False) -> None:
         """load the settings for matplotlib saved in another file"""
@@ -383,7 +381,7 @@ class DataManipulator:
             file_name += "_notex"
 
         config_module = importlib.import_module(file_name)
-        DataManipulator.legend_font = getattr(config_module, "legend_font")
+        DataManipulator.legend_font = config_module.legend_font
 
     @staticmethod
     def ax_legend(ax: Axes, lst_artists: list[Line2D | Patch]) -> None:
@@ -465,12 +463,10 @@ class DataManipulator:
         pixel_height: float = 600,
         pixel_width: float = 1200,
         *,
-        titles: Optional[Sequence[Sequence[str]]] = None,
-        axes_labels: Optional[Sequence[Sequence[Sequence[str]]]] = None,
-        line_labels: Optional[Sequence[Sequence[Sequence[str]]]] = None,
-        plot_types: Optional[
-            Sequence[Sequence[Literal["scatter", "contour", "heatmap"]]]
-        ] = None,
+        titles: Sequence[Sequence[str]] | None = None,
+        axes_labels: Sequence[Sequence[Sequence[str]]] | None = None,
+        line_labels: Sequence[Sequence[Sequence[str]]] | None = None,
+        plot_types: Sequence[Sequence[Literal["scatter", "contour", "heatmap"]]] | None = None,
     ) -> None:
         """
         initialize the real-time plotter using plotly
@@ -492,23 +488,16 @@ class DataManipulator:
         self.plot_types = plot_types
         # for contour plot, only one "line" is allowed
         traces_per_subplot = [
-            [
-                lines_per_fig if plot_types[i][j] == "scatter" else 1
-                for j in range(n_cols)
-            ]
+            [lines_per_fig if plot_types[i][j] == "scatter" else 1 for j in range(n_cols)]
             for i in range(n_rows)
         ]
         if titles is None:
             titles = [["" for _ in range(n_cols)] for _ in range(n_rows)]
         flat_titles = [item for sublist in titles for item in sublist]
         if axes_labels is None:
-            axes_labels = [
-                [["" for _ in range(2)] for _ in range(n_cols)] for _ in range(n_rows)
-            ]
+            axes_labels = [[["" for _ in range(2)] for _ in range(n_cols)] for _ in range(n_rows)]
         if line_labels is None:
-            line_labels = [
-                [["" for _ in range(2)] for _ in range(n_cols)] for _ in range(n_rows)
-            ]
+            line_labels = [[["" for _ in range(2)] for _ in range(n_cols)] for _ in range(n_rows)]
 
         # initial all the data arrays, not needed for just empty lists
         # x_arr = [[[] for _ in range(n_cols)] for _ in range(n_rows)]
@@ -543,17 +532,13 @@ class DataManipulator:
                     data_idx += 1
                 elif plot_type == "heatmap":
                     fig.add_trace(
-                        go.Heatmap(
-                            z=[], x=[], y=[], name=line_labels[i][j][0], zsmooth="best"
-                        ),
+                        go.Heatmap(z=[], x=[], y=[], name=line_labels[i][j][0], zsmooth="best"),
                         row=i + 1,
                         col=j + 1,
                     )
                     data_idx += 1
                 else:
-                    raise ValueError(
-                        f"Unsupported plot type '{plot_type}' at subplot ({i},{j})"
-                    )
+                    raise ValueError(f"Unsupported plot type '{plot_type}' at subplot ({i},{j})")
                 fig.update_xaxes(title_text=axes_labels[i][j][0], row=i + 1, col=j + 1)
                 fig.update_yaxes(title_text=axes_labels[i][j][1], row=i + 1, col=j + 1)
 
@@ -574,11 +559,12 @@ class DataManipulator:
                         idx += 1
             display(self.go_f)
         else:
-            import dash
-            from dash import html, dcc
-            from dash.dependencies import Input, Output
             import threading
             import webbrowser
+
+            import dash
+            from dash import dcc, html
+            from dash.dependencies import Input, Output
 
             port = 11235
             app = dash.Dash(__name__)
@@ -625,9 +611,7 @@ class DataManipulator:
             # Give the server a moment to start
             time.sleep(2)
 
-    def save_fig_periodically(
-        self, plot_path: Path | str, time_interval: int = 60
-    ) -> None:
+    def save_fig_periodically(self, plot_path: Path | str, time_interval: int = 60) -> None:
         """
         save the figure periodically
         this function will be running consistently in the background
@@ -647,13 +631,11 @@ class DataManipulator:
                 except Exception as e:
                     if attempt < max_retries - 1:
                         logger.warning(
-                            f"Failed to save image (attempt {attempt + 1}/{max_retries}): {str(e)}"
+                            f"Failed to save image (attempt {attempt + 1}/{max_retries}): {e!s}"
                         )
                         time.sleep(retry_delay)
                     else:
-                        logger.error(
-                            f"Failed to save image after {max_retries} attempts: {str(e)}"
-                        )
+                        logger.error(f"Failed to save image after {max_retries} attempts: {e!s}")
 
     def start_saving(self, plot_path: Path | str, time_interval: int = 60) -> None:
         """
@@ -679,18 +661,14 @@ class DataManipulator:
         row: int | tuple[int],
         col: int | tuple[int],
         lineno: int | tuple[int],
-        x_data: Sequence[float | str]
-        | Sequence[Sequence[float | str]]
-        | np.ndarray[float | str],
-        y_data: Sequence[float | str]
-        | Sequence[Sequence[float | str]]
-        | np.ndarray[float | str],
+        x_data: Sequence[float | str] | Sequence[Sequence[float | str]] | np.ndarray[float | str],
+        y_data: Sequence[float | str] | Sequence[Sequence[float | str]] | np.ndarray[float | str],
         z_data: Sequence[float | str]
         | Sequence[Sequence[float | str]]
         | np.ndarray[float | str] = (0,),
         *,
         incremental=False,
-        max_points: Optional[int] = None,
+        max_points: int | None = None,
         with_str: bool = False,
     ) -> None:
         """
@@ -758,7 +736,7 @@ class DataManipulator:
         # dim_tolift = [0, 0, 0]
         with self.go_f.batch_update():
             idx_z = 0
-            for no, (irow, icol, ilineno) in enumerate(zip(row, col, lineno)):
+            for no, (irow, icol, ilineno) in enumerate(zip(row, col, lineno, strict=False)):
                 plot_type = self.plot_types[irow][icol]
                 trace = self.live_dfs[irow][icol][ilineno]
                 if plot_type == "scatter":
@@ -799,12 +777,12 @@ class DataManipulator:
 
     @staticmethod
     def sel_pan_color(
-        row: Optional[int] = None,
-        col: Optional[int] = None,
+        row: int | None = None,
+        col: int | None = None,
         data_extract: bool = False,
-        external_file: Optional[str | Path] = None,
+        external_file: str | Path | None = None,
     ) -> (
-        Optional[tuple[tuple[float | int, ...], str]]
+        tuple[tuple[float | int, ...], str] | None
         | tuple[list[list[tuple[float | int, ...]]], dict]
     ):
         """
@@ -821,9 +799,7 @@ class DataManipulator:
         if external_file is None:
             localenv_filter = re.compile(r"^PYLAB_DB_LOCAL")
             filtered_vars = {
-                key: value
-                for key, value in os.environ.items()
-                if localenv_filter.match(key)
+                key: value for key, value in os.environ.items() if localenv_filter.match(key)
             }
             used_var = list(filtered_vars.keys())[0]
             if filtered_vars:
@@ -865,18 +841,18 @@ class DataManipulator:
         GUI for selecting the color
         """
         try:
+            from PyQt6.QtCore import Qt, pyqtSignal
+            from PyQt6.QtGui import QBrush, QColor
             from PyQt6.QtWidgets import (
                 QApplication,
+                QHBoxLayout,
+                QHeaderView,
+                QLabel,
                 QTableWidget,
                 QTableWidgetItem,
-                QHeaderView,
-                QWidget,
-                QLabel,
                 QVBoxLayout,
-                QHBoxLayout,
+                QWidget,
             )
-            from PyQt6.QtGui import QColor, QBrush
-            from PyQt6.QtCore import Qt, pyqtSignal
         except ImportError:
             logger.error("PyQt6 is not installed")
             return
@@ -896,12 +872,8 @@ class DataManipulator:
             def init_ui(self):
                 self.verticalHeader().setVisible(False)
                 self.horizontalHeader().setVisible(False)
-                self.horizontalHeader().setSectionResizeMode(
-                    QHeaderView.ResizeMode.Stretch
-                )
-                self.verticalHeader().setSectionResizeMode(
-                    QHeaderView.ResizeMode.Stretch
-                )
+                self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+                self.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
                 for r in range(len(self.rgb_mat)):
                     for c in range(48):

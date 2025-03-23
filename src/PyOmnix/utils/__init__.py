@@ -4,53 +4,54 @@ Utility functions for the PyOmnix package.
 This module re-exports commonly used utility functions for convenience.
 """
 
-from .env import set_envs, is_notebook
+from .data import (
+    CacheArray,
+    ObjectArray,
+    difference,
+    identify_direction,
+    loop_diff,
+    match_with_tolerance,
+    rename_duplicates,
+    symmetrize,
+)
+from .env import is_notebook, set_envs
 from .math import (
-    split_no_str,
-    factor,
-    convert_unit,
-    gen_seq,
-    constant_generator,
-    time_generator,
-    combined_generator_list,
-    next_lst_gen,
-    timestr_convert,
-    get_unit_factor_and_texname,
     CM_TO_INCH,
-    HPLANCK,
     HBAR,
     HBAR_THZ,
+    HPLANCK,
     KB,
+    SWITCH_DICT,
     UNIT_FACTOR_FROMSI,
     UNIT_FACTOR_TO_SI,
-    SWITCH_DICT,
+    combined_generator_list,
+    constant_generator,
+    convert_unit,
+    factor,
+    gen_seq,
+    get_unit_factor_and_texname,
+    next_lst_gen,
+    split_no_str,
+    time_generator,
+    timestr_convert,
 )
 from .plot import (
-    print_progress_bar,
-    hex_to_rgb,
-    truncate_cmap,
-    combine_cmap,
-    PlotParam,
     DEFAULT_PLOT_DICT,
-)
-from .data import (
-    ObjectArray,
-    CacheArray,
-    match_with_tolerance,
-    symmetrize,
-    difference,
-    loop_diff,
-    identify_direction,
+    PlotParam,
+    combine_cmap,
+    hex_to_rgb,
+    print_progress_bar,
+    truncate_cmap,
 )
 
 # For backward compatibility
 __all__ = [
-    "set_envs",
     "CM_TO_INCH",
-    "HPLANCK",
     "HBAR",
+    "HPLANCK",
     "KB",
     "factor",
     "hex_to_rgb",
     "is_notebook",
+    "set_envs",
 ]
