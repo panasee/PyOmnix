@@ -26,6 +26,8 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.messages.utils import messages_from_dict
+from langchain_core.messages.base import messages_to_dict
 from langchain_core.runnables import Runnable
 from langgraph.graph import add_messages
 from PIL import Image
@@ -275,7 +277,7 @@ class ChatMessagesRaw(BaseModel):
 
     messages: Annotated[
         list[AnyMessage],
-        Field(description="The list of messages"),
+        Field(description="The list of messages", default_factory=list),
         add_messages,
     ]
 
@@ -443,14 +445,8 @@ class ChatMessages(ChatMessagesRaw):
                     f.write(
                         f"{role}\n\t Reasoning: {msg.additional_kwargs.get('reasoning_content', '')}\n\t Content: {content}\n"
                     )
-                    # Write JSON with proper formatting between messages
-                    if msg != self.messages[0]:
-                        f_json.write(",\n")  # Add comma between JSON objects
-                    else:
-                        f_json.write("[\n")  # Start JSON array for first message
-                    f_json.write(msg.model_dump_json())
-                    if msg == self.messages[-1]:
-                        f_json.write("\n]")  # Close JSON array after last message
+                # Write JSON with proper formatting between messages
+                json.dump(messages_to_dict(self.messages), f_json, ensure_ascii=False, indent=4)
 
     def _sync_to_trimed_file(self) -> None:
         """Sync current trimmed messages to the file."""
@@ -477,19 +473,15 @@ class ChatMessages(ChatMessagesRaw):
                     if msg == self.trimed_messages[-1]:
                         f_json.write("\n]")  # Close JSON array after last message
 
-    def load_from_file(self) -> None:
+    def load_from_file(self, file_path: Path) -> None:
         """Load messages from the json file."""
-        if not self.file_sync or self.json_file_path is None:
-            return
-
-        if not os.path.exists(self.json_file_path):
+        if not os.path.exists(file_path):
             return
 
         self.messages.clear()
-        with open(self.json_file_path, encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             data = json.load(f)
-            for msg in data:
-                self.messages.append(ChatMessageDict(**msg).to_langchain_message())
+            self.messages = messages_from_dict(data)
         self.final_check = False
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -499,19 +491,29 @@ class ChatMessages(ChatMessagesRaw):
             self._sync_to_file()
 
     def request_response(
-        self, model: Runnable, max_tokens: int = None, temperature: float = 0.7
+        self,
+        model: Runnable,
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        schema: BaseModel | dict | None = None,
     ) -> AIMessage:
         """
         Request a response from the model. (only supports invoke currently). The response will be appended to the messages and also be returned.
+        Args:
+            schema: The schema of the response, if None, the response will be a normal string.
         """
         if not self.final_check:
             checked_messages = ChatMessages(messages=self.messages, final_check=True)
         else:
             checked_messages = self
 
-        model.temperature = temperature
+        if temperature is not None:
+            model.temperature = temperature
         if max_tokens is not None:
             model.max_tokens = max_tokens
+        if schema is not None:
+            model = model.with_structured_output(schema)
         response = model.invoke(checked_messages.messages)
         # reset final_check to False, as appending a response will break the structural validation
         self.messages.append(response)

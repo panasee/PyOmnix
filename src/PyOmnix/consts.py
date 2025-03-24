@@ -26,6 +26,13 @@ Strictly avoid mixing languages in the summary
 If the conversation contains bilingual content:
 Use the majority language (≥60%)
 For balanced languages (50/50), default to original initiator's language
+
+Additionally, monitor for topic deviation:
+1. Identify the initial topic of conversation
+2. Detect if the conversation has significantly deviated from this topic
+3. If deviation is detected, include a clear warning in your summary
+4. Suggest how participants can return to the main topic
+5. Phrase this warning in the same language as your summary
 """
 SUMMARIZE_PROMPT_HUMAN = """
 Please summarize the conversation above

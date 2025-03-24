@@ -31,7 +31,7 @@ class LoggerConfig:
     DEFAULT_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     DEFAULT_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
     # Default log file name with timestamp
-    DEFAULT_LOG_FILE = f"pyomnix_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    DEFAULT_LOG_FILE = f"log/pyomnix_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
     # Custom log levels
     TRACE = 5

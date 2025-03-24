@@ -206,7 +206,7 @@ class ObjectArray:
 
     def extend(self, *dims: int) -> None:
         """
-        Extend the array to a new shape, filling extended elements with None.
+        Extend the array to a new shape, filling extended elements with None. Not the dimensions of the array should be the same.
 
         This method extends the array to the specified dimensions while preserving
         the existing elements. If any of the new dimensions is smaller than the
@@ -218,7 +218,7 @@ class ObjectArray:
         # Check if new dimensions are valid (not smaller than current)
         logger.validate(
             len(dims) == len(self.shape),
-            "Expected {len(self.shape)} dimensions, got {len(dims)}",
+            f"Expected {len(self.shape)} dimensions, got {len(dims)}",
         )
 
         for i, (current, new) in enumerate(zip(self.shape, dims, strict=False)):
@@ -240,6 +240,12 @@ class ObjectArray:
         # Update shape and objects
         self.shape = dims
         self.objects = new_objects
+
+    def clear(self) -> None:
+        """
+        Clear the array
+        """
+        self.objects = self._create_objects(self.shape)
 
     def _copy_elements(
         self,

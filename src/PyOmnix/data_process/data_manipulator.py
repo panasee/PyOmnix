@@ -112,6 +112,9 @@ class DataManipulator:
         - label_in: the label of the data
         - **kwargs: keyword arguments for pd.read_csv (sep, skiprow, header, float_precision, ...), shared by all files
         """
+        if not isinstance(loc, tuple | list):
+            loc = (loc,)
+
         if not isinstance(data_in, tuple | list):
             data_in = (data_in,)
         if not isinstance(loc[0], tuple | list):
@@ -147,6 +150,7 @@ class DataManipulator:
         loc: tuple[int, ...] | int | None = None,
         label: str | Sequence[str] | None = None,
         concat: bool = False,
+        suppress_warning: bool = False,
     ) -> pd.DataFrame | list[pd.DataFrame]:
         """
         Get the data dataframes from the given location.
@@ -180,7 +184,8 @@ class DataManipulator:
             if locations:
                 dfs = [self.datas[*loc] for loc in locations]
             else:
-                logger.warning("No data found with label: %s", label)
+                if not suppress_warning:
+                    logger.warning("No data found with label: %s", label)
                 return None
         else:
             logger.error("Either loc or label must be provided")
@@ -191,6 +196,13 @@ class DataManipulator:
         else:
             return dfs
 
+    def clear_datas(self) -> None:
+        """
+        Clear the data in the ObjectArray
+        """
+        self.datas.clear()
+        self.labels.clear()
+        
     ###################
     # static plotting #
     ###################
