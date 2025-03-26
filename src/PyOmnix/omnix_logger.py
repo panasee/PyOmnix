@@ -181,9 +181,7 @@ def setup_logger(
             original_level = console_handler.level
             try:
                 console_handler.setLevel(logging.WARNING)
-                new_logger.warning(
-                    "Failed to create log file at %s: %s", str(log_file), str(e)
-                )
+                new_logger.warning("Failed to create log file at %s: %s", str(log_file), str(e))
             finally:
                 console_handler.setLevel(original_level)
 
@@ -268,9 +266,7 @@ class ExceptionHandler:
         return ExceptionHandler.DEFAULT_LEVEL
 
     @staticmethod
-    def format_exception(
-        exc_type: type[Exception], exc_value: Exception, exc_traceback
-    ) -> str:
+    def format_exception(exc_type: type[Exception], exc_value: Exception, exc_traceback) -> str:
         """Format exception information into a string"""
         tb_lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
         return "".join(tb_lines)
@@ -326,11 +322,88 @@ def close_logger(name: str | None = None) -> None:
 # Initialize the default logger
 default_logger = get_logger()
 
+
+class TempLogLevel:
+    """
+    Context manager to temporarily change a logger's logging level and its handlers.
+
+    This context manager allows you to temporarily change the logging level
+    of a logger and all its handlers, automatically restoring them when exiting the context.
+
+    Examples:
+        >>> logger = get_logger("my_logger")
+        >>> # Temporarily change level to DEBUG
+        >>> with TemporaryLogLevel(logger, logging.DEBUG):
+        ...     logger.debug("This debug message will be logged")
+        >>> # After exiting context, original levels are restored
+        >>> logger.debug("This debug message won't be logged if original level was > DEBUG")
+    """
+
+    def __init__(self, logger_internal: OmnixLogger, level: int):
+        """
+        Initialize the context manager.
+
+        Args:
+            logger: The logger instance to modify
+            level: The temporary logging level to set for both logger and handlers
+        """
+        self.logger = logger_internal
+        self.new_level = level
+        self.original_logger_level = None
+        self.original_handler_levels = []
+
+    def __enter__(self) -> OmnixLogger:
+        """
+        Enter the context, change the logger's and handlers' levels and return the logger.
+
+        Returns:
+            The logger with the new level set
+        """
+        # Save original levels
+        self.original_logger_level = self.logger.level
+        self.original_handler_levels = [h.level for h in self.logger.handlers]
+
+        # Set new levels
+        self.logger.setLevel(self.new_level)
+        for handler in self.logger.handlers:
+            handler.setLevel(self.new_level)
+
+        return self.logger
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """
+        Exit the context, restoring the logger's and handlers' original levels.
+
+        Args:
+            exc_type: Exception type if an exception occurred
+            exc_val: Exception value if an exception occurred
+            exc_tb: Exception traceback if an exception occurred
+        """
+        # Restore original levels
+        self.logger.setLevel(self.original_logger_level)
+        for handler, original_level in zip(
+            self.logger.handlers, self.original_handler_levels, strict=True
+        ):
+            handler.setLevel(original_level)
+
+
 if __name__ == "__main__":
-    logger = setup_logger(name="test", log_level=logging.DEBUG, log_file="test.log")
+    logger = setup_logger(name="test", log_level=logging.INFO, log_file="test.log")
     logger.trace("This is a trace message")
-    logger.debug("This is a debug message")
+    logger.debug("This is a debug message")  # Won't be logged at INFO level
     logger.info("This is an info message")
     logger.warning("This is a warning message")
     logger.error("This is an error message")
     logger.critical("This is a critical message")
+
+    # Demonstrate temporary log level change
+    print("\nChanging log level temporarily to DEBUG:")
+    with TempLogLevel(logger, logging.DEBUG):
+        logger.debug("This debug message WILL be logged while in the context")
+
+    print("\nBack to original INFO level:")
+    logger.debug("This debug message won't be logged again")
+    logger.info("This info message will be logged")
+
+    # Close the logger properly when done
+    close_logger("test")
