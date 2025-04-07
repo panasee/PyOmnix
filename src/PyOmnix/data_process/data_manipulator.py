@@ -3,6 +3,7 @@
 
 import importlib
 import json
+import logging
 import os
 import re
 import sys
@@ -23,6 +24,7 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from plotly.subplots import make_subplots
+from waitress import create_server
 
 from ..omnix_logger import get_logger
 from ..utils import (
@@ -35,6 +37,7 @@ from ..utils import (
 )
 
 logger = get_logger(__name__)
+logging.getLogger("waitress").setLevel(logging.ERROR)
 
 
 class DataManipulator:
@@ -85,6 +88,9 @@ class DataManipulator:
         self.go_f: go.FigureWidget | None = None
         self._stop_event = threading.Event()
         self._thread = None
+        self._dash_app = None
+        self._dash_thread = None
+        self._dash_server = None
 
     #####################
     # data manipulating #
@@ -202,7 +208,7 @@ class DataManipulator:
         """
         self.datas.clear()
         self.labels.clear()
-        
+
     ###################
     # static plotting #
     ###################
@@ -479,6 +485,8 @@ class DataManipulator:
         axes_labels: Sequence[Sequence[Sequence[str]]] | None = None,
         line_labels: Sequence[Sequence[Sequence[str]]] | None = None,
         plot_types: Sequence[Sequence[Literal["scatter", "contour", "heatmap"]]] | None = None,
+        browser_open: bool = False,
+        inline_jupyter: bool = True,
     ) -> None:
         """
         initialize the real-time plotter using plotly
@@ -486,7 +494,7 @@ class DataManipulator:
         Args:
         - n_rows: the number of rows of the subplots
         - n_cols: the number of columns of the subplots
-        - lines_per_fig: the number of lines per figure
+        - lines_per_fig: the number of lines per figure(ignored for contour plot)
         - pixel_height: the height of the figure in pixels
         - pixel_width: the width of the figure in pixels
         - titles: the titles of the subplots, shape should be (n_rows, n_cols), note the type notation
@@ -494,6 +502,7 @@ class DataManipulator:
         - line_labels: the labels of the lines, note the type notation, shape should be (n_rows, n_cols, lines_per_fig)
         - plot_types: the plot types for the lines, the type of plot for each subplot,
                 options include 'scatter' and 'contour', shape should be (n_rows, n_cols)
+        - browser_open: whether to open the browser automatically(only works when not in jupyter notebook)
         """
         if plot_types is None:
             plot_types = [["scatter" for _ in range(n_cols)] for _ in range(n_rows)]
@@ -514,6 +523,18 @@ class DataManipulator:
         # initial all the data arrays, not needed for just empty lists
         # x_arr = [[[] for _ in range(n_cols)] for _ in range(n_rows)]
         # y_arr = [[[[] for _ in range(lines_per_fig)] for _ in range(n_cols)] for _ in range(n_rows)]
+
+        def update_to_live_dfs():
+            """
+            put the data stored in go_f into the live_dfs to achieve real-time plotting
+            """
+            idx = 0
+            for i in range(n_rows):
+                for j in range(n_cols):
+                    num_traces = traces_per_subplot[i][j]
+                    for k in range(num_traces):
+                        self.live_dfs[i][j].append(self.go_f.data[idx])
+                        idx += 1
 
         fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=flat_titles)
         data_idx = 0
@@ -555,48 +576,37 @@ class DataManipulator:
                 fig.update_yaxes(title_text=axes_labels[i][j][1], row=i + 1, col=j + 1)
 
         fig.update_layout(height=pixel_height, width=pixel_width)
-        if is_notebook():
+
+        if is_notebook() and inline_jupyter:
+            browser_open = False
             from IPython.display import display
 
             self.go_f = go.FigureWidget(fig)
-            #            self.live_dfs = [
-            #                [[self.go_f.data[i * n_cols * lines_per_fig + j * lines_per_fig + k] for k in range(lines_per_fig)] for
-            #                 j in range(n_cols)] for i in range(n_rows)]
-            idx = 0
-            for i in range(n_rows):
-                for j in range(n_cols):
-                    num_traces = traces_per_subplot[i][j]
-                    for k in range(num_traces):
-                        self.live_dfs[i][j].append(self.go_f.data[idx])
-                        idx += 1
+            update_to_live_dfs()
             display(self.go_f)
+
         else:
-            import threading
             import webbrowser
 
-            import dash
-            from dash import dcc, html
+            from dash import Dash, dcc, html
             from dash.dependencies import Input, Output
 
-            port = 11235
-            app = dash.Dash(__name__)
-            app.layout = html.Div(
+            if inline_jupyter:
+                logger.debug("inline_jupyter is not supported in non-notebook environment")
+            if not self._dash_app:
+                app = Dash("live_plot_11235")
+                self._dash_app = app
+
+            self.go_f = fig
+            update_to_live_dfs()
+            self._dash_app.layout = html.Div(
                 [
-                    dcc.Graph(id="live-graph", figure=fig),
+                    dcc.Graph(id="live-graph", figure=self.go_f),
                     dcc.Interval(id="interval-component", interval=500, n_intervals=0),
                 ]
             )
 
-            self.go_f = fig
-            idx = 0
-            for i in range(n_rows):
-                for j in range(n_cols):
-                    num_traces = traces_per_subplot[i][j]
-                    for k in range(num_traces):
-                        self.live_dfs[i][j].append(self.go_f.data[idx])
-                        idx += 1
-
-            @app.callback(
+            @self._dash_app.callback(
                 Output("live-graph", "figure"),
                 Input("interval-component", "n_intervals"),
                 prevent_initial_call=True,
@@ -607,21 +617,22 @@ class DataManipulator:
             # Run Dash server in a separate thread
             def run_dash():
                 logger.info("\nStarting real-time plot server...")
-                logger.info(f"View the plot at: http://localhost:{port}")
-                # Open the browser automatically
-                webbrowser.open(f"http://localhost:{port}")
+                logger.info("View the plot at: http://localhost:11235")
                 # Run the server
-                app.run_server(
-                    debug=False,
-                    port=port,
-                    dev_tools_silence_routes_logging=True,
-                    use_reloader=False,
+                # Use the already created server instance instead of calling run directly
+                self._dash_server = create_server(
+                    self._dash_app.server, host="localhost", port=11235, threads=2
                 )
+                self._dash_server.run()
 
-            self._dash_thread = threading.Thread(target=run_dash, daemon=True)
-            self._dash_thread.start()
-            # Give the server a moment to start
-            time.sleep(2)
+            if browser_open:
+                webbrowser.open("http://localhost:11235")
+
+            if not self._dash_thread:
+                self._dash_thread = threading.Thread(target=run_dash, daemon=True)
+                self._dash_thread.start()
+                # Give the server a moment to start
+                time.sleep(1)
 
     def save_fig_periodically(self, plot_path: Path | str, time_interval: int = 60) -> None:
         """
@@ -818,7 +829,7 @@ class DataManipulator:
             if filtered_vars:
                 filepath = Path(filtered_vars[used_var]) / "pan-colors.json"
                 logger.info(f"load path from ENVIRON: {used_var}")
-                return self.sel_pan_color(row, col, data_extract, filepath)
+                return DataManipulator.sel_pan_color(row, col, data_extract, filepath)
             else:
                 with resources.open_text("DaySpark.pltconfig", "pan_color.json") as f:
                     color_dict = json.load(f)
@@ -833,8 +844,8 @@ class DataManipulator:
         rgb_mat.append(extra)
         if not data_extract:
             if row is None and col is None:
-                self.load_settings(False, False)
-                fig, ax, _ = self.init_canvas(1, 1, 20, 20)
+                DataManipulator.load_settings(False, False)
+                fig, ax, _ = DataManipulator.init_canvas(1, 1, 20, 20)
                 ax.imshow(rgb_mat)
                 ax.set_xticks(np.arange(0, 48, 5))
                 ax.tick_params(top=True, labeltop=True, bottom=False, labelbottom=False)
@@ -914,7 +925,7 @@ class DataManipulator:
         class MainWindow(QWidget):
             def __init__(self):
                 super().__init__()
-                rgb_mat, color_dict = self.sel_pan_color(data_extract=True)
+                rgb_mat, color_dict = DataManipulator.sel_pan_color(data_extract=True)
                 self.color_widget = ColorPaletteWidget(rgb_mat, color_dict)
 
                 # Info labels

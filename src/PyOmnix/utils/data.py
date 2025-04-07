@@ -81,7 +81,7 @@ class ObjectArray:
         - dims: the dimensions of the objects
         """
         if len(dims) == 1:
-            return [self.fill_value for _ in range(dims[0])]
+            return [copy.deepcopy(self.fill_value) for _ in range(dims[0])]
         else:
             return [self._create_objects(dims[1:]) for _ in range(dims[0])]
 
@@ -364,8 +364,8 @@ class CacheArray:
             var_crit (float): the criterion of the variance
         """
         if self.cache.size <= 3:
-            print("Cache is not enough to judge the stability")
-            return None
+            logger.warning("Cache is not enough to judge the stability")
+            var_stable = False
         if var_crit is None:
             var_stable = self.cache.var() < self.var_crit
         else:

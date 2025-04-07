@@ -69,8 +69,8 @@ def print_progress_bar(
     barr = fill * filled_length + "-" * (length - filled_length)
     print(f"\r{prefix} [{barr}] {percent}% {suffix}", end=print_end, flush=True)
     # Print New Line on Complete
-    if iteration == total:
-        print()
+    #if iteration == total:
+    #    print()
 
 
 def hex_to_rgb(

@@ -51,13 +51,13 @@ def set_paths(*, omnix_path: Path | str | None = None) -> None:
         LOG_FILE_PATH = OMNIX_PATH / "logs"
     elif os.getenv("OMNIX_PATH") is None:
         if os.getenv("PYLAB_DB_LOCAL") is None:
-            logger.info("OMNIX_PATH not set")
+            logger.info("•᷄ࡇ•᷅ OMNIX_PATH not set")
             return
         else:
-            logger.info("read from PYLAB_DB_LOCAL:%s", os.getenv("PYLAB_DB_LOCAL"))
+            logger.info("( *・ω・) read from PYLAB_DB_LOCAL:%s", os.getenv("PYLAB_DB_LOCAL"))
             OMNIX_PATH = Path(os.getenv("PYLAB_DB_LOCAL"))
             LOG_FILE_PATH = OMNIX_PATH / "logs"
     else:
-        logger.info("read from OMNIX_PATH:%s", os.getenv("OMNIX_PATH"))
+        logger.info("( *・ω・) read from OMNIX_PATH:%s", os.getenv("OMNIX_PATH"))
         OMNIX_PATH = Path(os.getenv("OMNIX_PATH"))
         LOG_FILE_PATH = OMNIX_PATH / "logs"
