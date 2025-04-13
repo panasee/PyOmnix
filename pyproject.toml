@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyomnix"
-version = "0.1b0"
+version = "0.1b1"
 description = "Integrated Tools for Scientific Computing, Data Analysis, and AI Development"
 authors = [
     {name = "Dongkai", email = "dongkai001@e.ntu.edu.sg"}
@@ -33,6 +33,7 @@ keywords = [
 ]
 urls = {Homepage = "https://github.com/panasee/PyOmnix", Repository = "https://github.com/panasee/PyOmnix.git"}
 dependencies = [
+    "pillow",
     "numpy",
     "pandas",
     "matplotlib",

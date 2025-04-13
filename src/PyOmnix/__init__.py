@@ -5,6 +5,7 @@ from . import utils
 from .consts import LOG_FILE_PATH, OMNIX_PATH, set_paths
 from .omnix_logger import get_logger, setup_logger
 from .utils import set_envs
+from .data_process import DataManipulator
 
 # get_logger will return the logger instance if already exists
 # setup_logger will reset existing logger

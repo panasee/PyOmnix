@@ -85,26 +85,6 @@ class ObjectArray:
         else:
             return [self._create_objects(dims[1:]) for _ in range(dims[0])]
 
-    def _get_subarray(self, array, index: tuple[int, ...]) -> list[dict]:
-        """
-        get the subarray of the dataframes assigned by the index
-        """
-        if len(index) == 1:
-            return array[index[0]]
-        else:
-            return self._get_subarray(array[index[0]], index[1:])
-
-    def _set_subarray(
-        self, array, index: tuple[int, ...], target_df: pd.DataFrame
-    ) -> None:
-        """
-        set the subarray of the dataframes assignated by the index
-        """
-        if len(index) == 1:
-            array[index[0]] = copy.deepcopy(target_df)
-        else:
-            self._set_subarray(array[index[0]], index[1:], target_df)
-
     def _flatten(self, lst):
         """
         Flatten a multi-dimensional list using recursion
@@ -125,12 +105,29 @@ class ObjectArray:
         - index: the index of the object to be get
         """
         if isinstance(index, int):
-            flat_list = self._flatten(self.objects)
-            return flat_list[index]
-        result = self._get_subarray(self.objects, index)
-        while isinstance(result, list) and len(result) == 1:
-            result = result[0]
-        return result
+            index = np.unravel_index(index, self.shape)
+        arr = self.objects
+        for idx in index:
+            arr = arr[idx]
+        return arr
+
+    def __setitem__(self, index: tuple[int, ...] | int, value: Any) -> None:
+        """
+        Set the value at the specified index.
+
+        Args:
+            index: The index where to set the value
+            value: The value to set
+
+        Raises:
+            ValueError: If unique is True and the value already exists in the array
+        """
+        if isinstance(index, int):
+            index = np.unravel_index(index, self.shape)
+        arr = self.objects
+        for idx in index[:-1]:
+            arr = arr[idx]
+        arr[index[-1]] = copy.deepcopy(value)
 
     def _are_equal(self, obj1: Any, obj2: Any) -> bool:
         """
@@ -186,23 +183,6 @@ class ObjectArray:
         
         if other_locations:
             return False
-
-    def __setitem__(self, index: tuple[int, ...] | int, value: Any) -> None:
-        """
-        Set the value at the specified index.
-
-        Args:
-            index: The index where to set the value
-            value: The value to set
-
-        Raises:
-            ValueError: If unique is True and the value already exists in the array
-        """
-        if isinstance(index, int):
-            index = (index,)
-        
-        self._validate_uniqueness(value, index)
-        self._set_subarray(self.objects, index, value)
 
     def extend(self, *dims: int) -> None:
         """
@@ -335,11 +315,26 @@ class CacheArray:
     A class working as dynamic cache with max length and if-stable status
     """
 
-    def __init__(self, cache_length: int = 60, var_crit: float = 1e-4):
+    def __init__(self, cache_length: int = 60, *, var_crit: float = 1e-4, least_length: int = 3):
+        """
+        Args:
+            cache_length: the max length of the cache
+            var_crit: the criterion of the variance
+            least_length: the least length of the cache to judge the stability(smaller cache will be considered unstable)
+        """
         self.cache_length = cache_length
-        self.mean: float = None
         self.cache = np.array([])
         self.var_crit = var_crit
+        self.least_length = least_length
+
+    @property
+    def mean(self) -> float:
+        """return the mean of the cache"""
+        if self.cache.size == 0:
+            logger.warning("Cache is empty")
+            return None
+        else:
+            return self.cache.mean()
 
     def update_cache(
         self, new_value: float | Sequence[float]
@@ -351,7 +346,6 @@ class CacheArray:
             new_value = [new_value]
 
         self.cache = np.append(self.cache, new_value)[-self.cache_length :]
-        self.mean = self.cache.mean()
 
     def get_status(
         self, *, require_cache: bool = False, var_crit: float | None = None
@@ -363,17 +357,18 @@ class CacheArray:
             require_cache (bool): whether to return the cache array
             var_crit (float): the criterion of the variance
         """
-        if self.cache.size <= 3:
+        if self.cache.size <= self.least_length:
             logger.warning("Cache is not enough to judge the stability")
             var_stable = False
-        if var_crit is None:
-            var_stable = self.cache.var() < self.var_crit
         else:
-            var_stable = self.cache.var() < var_crit
+            if var_crit is None:
+                var_stable = self.cache.var() < self.var_crit
+            else:
+                var_stable = self.cache.var() < var_crit
+
         if require_cache:
             return {"cache": self.cache, "mean": self.mean, "if_stable": var_stable}
-        else:
-            return {"mean": self.mean, "if_stable": var_stable}
+        return {"mean": self.mean, "if_stable": var_stable}
 
 
 def rename_duplicates(columns: list[str]) -> list[str]:
@@ -673,3 +668,15 @@ def identify_direction(
     # Assign the filtered directions back to the DataFrame
     df_in["direction"] = filtered_directions
     return df_in
+
+def sph_to_cart(r: float, theta: float, phi: float) -> tuple[float, float, float]:
+    """
+    Convert spherical coordinates to Cartesian coordinates
+    r: radius
+    theta: polar angle
+    phi: azimuthal angle
+    """
+    x = r * np.sin(theta) * np.cos(phi)
+    y = r * np.sin(theta) * np.sin(phi)
+    z = r * np.cos(theta)
+    return x, y, z

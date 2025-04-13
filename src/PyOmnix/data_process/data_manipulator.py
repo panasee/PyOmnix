@@ -104,7 +104,7 @@ class DataManipulator:
 
     def load_dfs(
         self,
-        loc: tuple[Sequence[int], ...] | tuple[int, ...],
+        loc: int | tuple[Sequence[int], ...] | tuple[int, ...],
         data_in: Path | str | pd.DataFrame | Sequence[Path | str | pd.DataFrame],
         label_in: str | Sequence[str] | None = None,
         **kwargs,
@@ -163,13 +163,14 @@ class DataManipulator:
         Either loc or label should be provided, but not both.
         (label would be ignored if loc is provided)
         for batch data, use ((1,),(2,)) instead of (1,2)
+        Note: label allows for not-found, while loc does not
 
         Args:
             loc: The location indices to retrieve data from
             label: The label to search for in the data
 
         Returns:
-            None if no data is found, or a list of DataFrames
+            None if no data is found, or a list of DataFrames (even if only one df found)
         """
         dfs = None
         if loc is not None:
@@ -181,7 +182,7 @@ class DataManipulator:
                 dfs = [self.datas[*loc_i] for loc_i in loc]
             else:
                 logger.error("Invalid loc type")
-                return
+                return None
 
         elif label is not None:
             # Find locations with matching label
