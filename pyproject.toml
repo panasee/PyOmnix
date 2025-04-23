@@ -10,10 +10,10 @@ authors = [
     {name = "Dongkai", email = "dongkai001@e.ntu.edu.sg"}
 ]
 readme = "README.md"
-license = {text = "MIT License"}
+license = "MIT"
 requires-python = ">=3.11"
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
@@ -21,7 +21,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Information Analysis",
     "Topic :: Scientific/Engineering :: Visualization",
     "Topic :: Software Development :: Libraries :: Python Modules",
-    "License :: OSI Approved :: MIT License",
 ]
 keywords = [
     "data-analysis",
@@ -70,7 +69,7 @@ include = ["pyomnix*"]
 exclude = ["tests*", "docs*", "examples*", "*.tests", "*.tests.*"]
 
 [project.scripts]
-gui_pan_color = "pyomnix.data_plot:DataPlot.gui_pan_color"
+gui_pan_color = "pyomnix.data_process:DataManipulator.gui_pan_color"
 
 [tool.setuptools]
 include-package-data = true
@@ -83,20 +82,3 @@ line-length = 100
 target-version = "py311"
 select = ["E", "F", "B", "I", "N", "UP", "PL", "RUF"]
 ignore = []
-
-[tool.ruff.isort]
-known-first-party = ["pyomnix"]
-
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true

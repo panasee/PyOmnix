@@ -42,6 +42,7 @@ from .plot import (
     hex_to_rgb,
     print_progress_bar,
     truncate_cmap,
+    hsv_analyze,
 )
 
 # For backward compatibility

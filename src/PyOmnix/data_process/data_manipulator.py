@@ -118,18 +118,22 @@ class DataManipulator:
         - label_in: the label of the data
         - **kwargs: keyword arguments for pd.read_csv (sep, skiprow, header, float_precision, ...), shared by all files
         """
-        if not isinstance(loc, tuple | list):
-            loc = (loc,)
-
         if not isinstance(data_in, tuple | list):
+            logger.validate(
+                not isinstance(label_in, tuple | list) or label_in is None,
+                "data_in must be in same shape with label_in",
+            )
             data_in = (data_in,)
-        if not isinstance(loc[0], tuple | list):
+            label_in = (label_in,)
             loc = (loc,)
+        else:
+            logger.validate(
+                isinstance(label_in, tuple | list),
+                "data_in must be in same shape with label_in",
+            )
 
         if label_in is None:
-            label_in = ["" for _ in range(len(loc))]
-        elif not isinstance(label_in, tuple | list):
-            label_in = (label_in,)
+            label_in = ["" for _ in range(len(data_in))]
         logger.validate(
             len(data_in) == len(loc) == len(label_in),
             "data_path and loc must have the same length",
@@ -137,10 +141,10 @@ class DataManipulator:
 
         for path, loc, label in zip(data_in, loc, label_in, strict=False):
             if isinstance(path, pd.DataFrame):
-                self.datas[*loc] = path
+                self.datas[loc] = path
             else:
-                self.datas[*loc] = pd.read_csv(path, **kwargs)
-            self.labels[*loc] = label
+                self.datas[loc] = pd.read_csv(path, **kwargs)
+            self.labels[loc] = label
 
     def add_label(self, label: str, loc: tuple[int, ...] | int) -> None:
         """
@@ -148,7 +152,7 @@ class DataManipulator:
         """
         if isinstance(loc, int):
             loc = (loc,)
-        self.labels[*loc] = label
+        self.labels[loc] = label
 
     def get_datas(
         self,
@@ -179,7 +183,7 @@ class DataManipulator:
             if isinstance(loc[0], int):
                 loc = (loc,)
             if isinstance(loc[0], tuple | list | np.ndarray):
-                dfs = [self.datas[*loc_i] for loc_i in loc]
+                dfs = [self.datas[loc_i] for loc_i in loc]
             else:
                 logger.error("Invalid loc type")
                 return None
@@ -189,7 +193,7 @@ class DataManipulator:
             locations = self.labels.find_objs(label)
             # Return all matching data as a list of tuples
             if locations:
-                dfs = [self.datas[*loc] for loc in locations]
+                dfs = [self.datas[loc] for loc in locations]
             else:
                 if not suppress_warning:
                     logger.warning("No data found with label: %s", label)
@@ -232,14 +236,19 @@ class DataManipulator:
         """
         return get_unit_factor_and_texname(self.unit[property_name])[1]
 
-    def set_unit(self, unit_new: dict = None) -> None:
+    def set_unit(self, unit_new: dict[str, str] | None = None, **kwargs: str) -> None:
         """
         Set the unit for the plot, default to SI
 
         Args:
         - unit_new: the unit dictionary, the format is {"I":"uA", "V":"V", "R":"Ohm"}
+        - **kwargs: additional units specified as keyword arguments (e.g., I="uA", V="V")
         """
+        if unit_new is None:
+            unit_new = {}
         self.unit.update(unit_new)
+        if kwargs:
+            self.unit.update(kwargs)
 
     def plot_df_cols(
         self,
@@ -305,19 +314,60 @@ class DataManipulator:
         fig.colorbar(contour)
         return fig, ax
 
+    @staticmethod
+    def plot_spherical_background(ax: Axes, n_meridians=20, n_parallels=10, alpha=0.1):
+        """
+        plot the spherical background
+        """
+        # create the spherical grid
+        u = np.linspace(0, 2 * np.pi, n_meridians)
+        v = np.linspace(0, np.pi, n_parallels)
+    
+        # meridians (half circle from north to south)
+        for phi in u:
+            x = np.sin(v) * np.cos(phi)
+            y = np.sin(v) * np.sin(phi)
+            z = np.cos(v)
+            ax.plot(x, y, z, color='gray', alpha=alpha, linestyle='dashed')
+    
+        # parallels (parallel circles)
+        for theta in v[1:-1]:  # skip the north and south poles
+            r = np.sin(theta)
+            x = r * np.cos(u)
+            y = r * np.sin(u)
+            z = np.cos(theta) * np.ones_like(u)
+            ax.plot(x, y, z, color='gray', alpha=alpha, linestyle='dashed')
+    
+        # add the axes
+        ax.plot([-1, 1], [0, 0], [0, 0], color='red', alpha=0.5)   # X-axis
+        ax.plot([0, 0], [-1, 1], [0, 0], color='green', alpha=0.5) # Y-axis
+        ax.plot([0, 0], [0, 0], [-1, 1], color='blue', alpha=0.5)  # Z-axis
+
+        # set the equal aspect ratio
+        ax.set_box_aspect([1, 1, 1])
+
     def plot_3d(
         self,
-        x_col: str,
-        y_col: str,
-        z_col: str,
+        x_col: str | Sequence[float | int],
+        y_col: str | Sequence[float | int],
+        z_col: str | Sequence[float | int],
         *,
         data_df: pd.DataFrame | None = None,
         loc: tuple[int, ...] | int | None = None,
         label: str | None = None,
-        plot_type: Literal["surface", "scatter", "line"] = "surface",
+        plot_type: Literal["surface", "scatter", "line"],
         cmap: str | Colormap = "viridis",
         alpha: float = 1.0,
         view_init: tuple[float, float] | None = None,
+        color_lst: list[str] | None = None,
+        colorbar: bool = True,
+        title: str | None = None,
+        grid: bool = True,
+        coord_type: Literal["sphere", "cartesian"] = "cartesian",
+        show_sphere: bool = True,
+        sphere_alpha: float = 0.05,
+        grid_alpha: float = 0.05,
+        unit_limit: bool = True,
     ) -> tuple[Figure, Axes]:
         """
         Create a 3D plot of the data.
@@ -339,53 +389,98 @@ class DataManipulator:
         Returns:
             tuple: The figure and axes objects
         """
+        fig = plt.figure(figsize=(12, 10))
+        ax = fig.add_subplot(111, projection="3d")
 
-        if data_df is None:
-            data_df = self.get_datas(loc=loc, label=label, concat=True)
+        def get_data(col, data):
+            if isinstance(col, str | bytes):
+                return data[col].values if data is not None else None
+            return np.asarray(col)
 
-            fig = plt.figure(figsize=(12, 10))
-            ax = fig.add_subplot(111, projection="3d")
+        x_data = get_data(x_col, data_df)
+        y_data = get_data(y_col, data_df)
+        z_data = get_data(z_col, data_df)
 
-        x_data = data_df[x_col].values
-        y_data = data_df[y_col].values
-        z_data = data_df[z_col].values
+        if x_data is None or y_data is None or z_data is None:
+            if data_df is None:
+                data_df = self.get_datas(loc=loc, label=label, concat=True)
+            if x_data is None:
+                x_data = get_data(x_col, data_df)
+            if y_data is None:
+                y_data = get_data(y_col, data_df)
+            if z_data is None:
+                z_data = get_data(z_col, data_df)
+
+        if show_sphere and coord_type == "sphere":
+            u_grid = np.linspace(0, 2 * np.pi, 50)
+            v_grid = np.linspace(0, np.pi, 50)
+            x_grid = np.outer(np.cos(u_grid), np.sin(v_grid))
+            y_grid = np.outer(np.sin(u_grid), np.sin(v_grid))
+            z_grid = np.outer(np.ones(np.size(u_grid)), np.cos(v_grid))
+            ax.plot_surface(x_grid, y_grid, z_grid, color='blue', alpha=sphere_alpha, rstride=1, cstride=1)
 
         if plot_type == "surface":
-            # For surface plots, we need to reshape the data into a grid
-            # First, get unique x and y values
-            x_unique = np.sort(np.unique(x_data))
-            y_unique = np.sort(np.unique(y_data))
-
-            # Create a grid of x and y values
-            X, Y = np.meshgrid(x_unique, y_unique)
-
-            # Create a grid for Z values
-            Z = np.zeros_like(X)
-
-            # Fill the Z grid with values from the dataframe
-            for i, x_val in enumerate(x_unique):
-                for j, y_val in enumerate(y_unique):
-                    mask = (x_data == x_val) & (y_data == y_val)
-                    if np.any(mask):
-                        Z[j, i] = z_data[mask][0]
-
-            surf = ax.plot_surface(X, Y, Z, cmap=cmap, alpha=alpha)
-            fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
+            # More efficient surface plot using griddata for irregular data
+            x_unique = np.unique(x_data)
+            y_unique = np.unique(y_data)
+        
+            if len(x_unique) * len(y_unique) != len(x_data):
+                # Use interpolation for non-grid data
+                from scipy.interpolate import griddata
+                points = np.column_stack((x_data, y_data))
+                grid_x, grid_y = np.meshgrid(
+                    np.linspace(x_data.min(), x_data.max(), 100),
+                    np.linspace(y_data.min(), y_data.max(), 100)
+                )
+                grid_z = griddata(points, z_data, (grid_x, grid_y), method='cubic')
+                X, Y, Z = grid_x, grid_y, grid_z
+            else:
+                # Regular grid data
+                X, Y = np.meshgrid(x_unique, y_unique)
+                Z = z_data.reshape(len(y_unique), len(x_unique))
+        
+            surf = ax.plot_surface(X, Y, Z, cmap=cmap, alpha=alpha, 
+                                 rstride=1, cstride=1, linewidth=0, 
+                                 antialiased=False)
+            if colorbar:
+                fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label=z_col if isinstance(z_col, str) else 'Z')
 
         elif plot_type == "scatter":
-            scatter = ax.scatter(x_data, y_data, z_data, c=z_data, cmap=cmap, alpha=alpha)
-            fig.colorbar(scatter, ax=ax, shrink=0.5, aspect=5)
+            if color_lst is None:
+                scatter = ax.scatter(
+                    x_data, y_data, z_data, c=z_data, cmap=cmap, alpha=alpha, s=5, edgecolors='none'
+                )
+            else:
+                scatter = ax.scatter(
+                    x_data, y_data, z_data, c=color_lst, alpha=alpha, s=5, edgecolors='none'
+                )
+            if colorbar:
+                fig.colorbar(scatter, ax=ax, shrink=0.5, aspect=5, label=z_col if isinstance(z_col, str) else 'Z')
 
         elif plot_type == "line":
-            ax.plot(x_data, y_data, z_data, alpha=alpha)
+            ax.plot(x_data, y_data, z_data, alpha=alpha,
+                    linewidth=2, marker='o' if len(x_data) <= 100 else None, markersize=4)
 
-        ax.set_xlabel(x_col)
-        ax.set_ylabel(y_col)
-        ax.set_zlabel(z_col)
+        ax.set_xlabel(x_col if isinstance(x_col, str) else 'X')
+        ax.set_ylabel(y_col if isinstance(y_col, str) else 'Y')
+        ax.set_zlabel(z_col if isinstance(z_col, str) else 'Z')
 
+        if title:
+            ax.set_title(title)
         if view_init is not None:
             ax.view_init(elev=view_init[0], azim=view_init[1])
 
+        if unit_limit:
+            ax.set_box_aspect([1, 1, 1])
+            ax.set_xlim(-1, 1)
+            ax.set_ylim(-1, 1)
+            ax.set_zlim(-1, 1)
+
+        if grid and coord_type == "sphere":
+            DataManipulator.plot_spherical_background(ax, alpha=grid_alpha)
+        elif grid and coord_type == "cartesian":
+            ax.grid(grid)
+        plt.tight_layout()
         return fig, ax
 
     @staticmethod
@@ -485,7 +580,8 @@ class DataManipulator:
         titles: Sequence[Sequence[str]] | None = None,
         axes_labels: Sequence[Sequence[Sequence[str]]] | None = None,
         line_labels: Sequence[Sequence[Sequence[str]]] | None = None,
-        plot_types: Sequence[Sequence[Literal["scatter", "contour", "heatmap"]]] | None = None,
+        plot_types: Sequence[Sequence[Literal["scatter", "contour", "heatmap"]]]
+        | None = None,
         browser_open: bool = False,
         inline_jupyter: bool = True,
     ) -> None:
@@ -510,16 +606,23 @@ class DataManipulator:
         self.plot_types = plot_types
         # for contour plot, only one "line" is allowed
         traces_per_subplot = [
-            [lines_per_fig if plot_types[i][j] == "scatter" else 1 for j in range(n_cols)]
+            [
+                lines_per_fig if plot_types[i][j] == "scatter" else 1
+                for j in range(n_cols)
+            ]
             for i in range(n_rows)
         ]
         if titles is None:
             titles = [["" for _ in range(n_cols)] for _ in range(n_rows)]
         flat_titles = [item for sublist in titles for item in sublist]
         if axes_labels is None:
-            axes_labels = [[["" for _ in range(2)] for _ in range(n_cols)] for _ in range(n_rows)]
+            axes_labels = [
+                [["" for _ in range(2)] for _ in range(n_cols)] for _ in range(n_rows)
+            ]
         if line_labels is None:
-            line_labels = [[["" for _ in range(2)] for _ in range(n_cols)] for _ in range(n_rows)]
+            line_labels = [
+                [["" for _ in range(lines_per_fig)] for _ in range(n_cols)] for _ in range(n_rows)
+            ]
 
         # initial all the data arrays, not needed for just empty lists
         # x_arr = [[[] for _ in range(n_cols)] for _ in range(n_rows)]
@@ -566,13 +669,17 @@ class DataManipulator:
                     data_idx += 1
                 elif plot_type == "heatmap":
                     fig.add_trace(
-                        go.Heatmap(z=[], x=[], y=[], name=line_labels[i][j][0], zsmooth="best"),
+                        go.Heatmap(
+                            z=[], x=[], y=[], name=line_labels[i][j][0], zsmooth="best"
+                        ),
                         row=i + 1,
                         col=j + 1,
                     )
                     data_idx += 1
                 else:
-                    raise ValueError(f"Unsupported plot type '{plot_type}' at subplot ({i},{j})")
+                    raise ValueError(
+                        f"Unsupported plot type '{plot_type}' at subplot ({i},{j})"
+                    )
                 fig.update_xaxes(title_text=axes_labels[i][j][0], row=i + 1, col=j + 1)
                 fig.update_yaxes(title_text=axes_labels[i][j][1], row=i + 1, col=j + 1)
 
@@ -593,7 +700,9 @@ class DataManipulator:
             from dash.dependencies import Input, Output
 
             if inline_jupyter:
-                logger.debug("inline_jupyter is not supported in non-notebook environment")
+                logger.debug(
+                    "inline_jupyter is not supported in non-notebook environment"
+                )
             if not self._dash_app:
                 app = Dash("live_plot_11235")
                 self._dash_app = app
@@ -635,7 +744,9 @@ class DataManipulator:
                 # Give the server a moment to start
                 time.sleep(1)
 
-    def save_fig_periodically(self, plot_path: Path | str, time_interval: int = 60) -> None:
+    def save_fig_periodically(
+        self, plot_path: Path | str, time_interval: int = 60
+    ) -> None:
         """
         save the figure periodically
         this function will be running consistently in the background
@@ -659,7 +770,9 @@ class DataManipulator:
                         )
                         time.sleep(retry_delay)
                     else:
-                        logger.error(f"Failed to save image after {max_retries} attempts: {e!s}")
+                        logger.error(
+                            f"Failed to save image after {max_retries} attempts: {e!s}"
+                        )
 
     def start_saving(self, plot_path: Path | str, time_interval: int = 60) -> None:
         """
@@ -685,8 +798,12 @@ class DataManipulator:
         row: int | tuple[int],
         col: int | tuple[int],
         lineno: int | tuple[int],
-        x_data: Sequence[float | str] | Sequence[Sequence[float | str]] | np.ndarray[float | str],
-        y_data: Sequence[float | str] | Sequence[Sequence[float | str]] | np.ndarray[float | str],
+        x_data: Sequence[float | str]
+        | Sequence[Sequence[float | str]]
+        | np.ndarray[float | str],
+        y_data: Sequence[float | str]
+        | Sequence[Sequence[float | str]]
+        | np.ndarray[float | str],
         z_data: Sequence[float | str]
         | Sequence[Sequence[float | str]]
         | np.ndarray[float | str] = (0,),
@@ -760,7 +877,9 @@ class DataManipulator:
         # dim_tolift = [0, 0, 0]
         with self.go_f.batch_update():
             idx_z = 0
-            for no, (irow, icol, ilineno) in enumerate(zip(row, col, lineno, strict=False)):
+            for no, (irow, icol, ilineno) in enumerate(
+                zip(row, col, lineno, strict=False)
+            ):
                 plot_type = self.plot_types[irow][icol]
                 trace = self.live_dfs[irow][icol][ilineno]
                 if plot_type == "scatter":
@@ -824,7 +943,9 @@ class DataManipulator:
         if external_file is None:
             localenv_filter = re.compile(r"^PYLAB_DB_LOCAL")
             filtered_vars = {
-                key: value for key, value in os.environ.items() if localenv_filter.match(key)
+                key: value
+                for key, value in os.environ.items()
+                if localenv_filter.match(key)
             }
             used_var = list(filtered_vars.keys())[0]
             if filtered_vars:
@@ -897,8 +1018,12 @@ class DataManipulator:
             def init_ui(self):
                 self.verticalHeader().setVisible(False)
                 self.horizontalHeader().setVisible(False)
-                self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-                self.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+                self.horizontalHeader().setSectionResizeMode(
+                    QHeaderView.ResizeMode.Stretch
+                )
+                self.verticalHeader().setSectionResizeMode(
+                    QHeaderView.ResizeMode.Stretch
+                )
 
                 for r in range(len(self.rgb_mat)):
                     for c in range(48):

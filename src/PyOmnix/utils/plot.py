@@ -5,7 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from ..omnix_logger import get_logger
 from ..pltconfig import color_preset as colors
@@ -161,9 +161,9 @@ def hsv_analyze(
     theta_v = v_norm * np.pi
 
     x_plot, y_plot, z_plot = sph_to_cart(r_s, theta_v, phi_h)
+    colors_lst = list(map(lambda h, s, v: colorsys.hsv_to_rgb(h, s, v), h_norm, s_norm, v_norm))
 
     if if_plot:
-        colors_lst = list(map(lambda h, s, v: colorsys.hsv_to_rgb(h, s, v), h_norm, s_norm, v_norm))
         fig = plt.figure(figsize=(10, 7))
         ax = fig.add_subplot(111, projection="3d")
         ax.scatter(x_plot, y_plot, z_plot, c=colors_lst, s=1, alpha=0.6)
@@ -174,7 +174,8 @@ def hsv_analyze(
         plt.tight_layout()
         plt.show()
 
-    return x_plot, y_plot, z_plot, colors_lst
+    else:
+        return x_plot, y_plot, z_plot, colors_lst
 
 
 def combine_cmap(cmap_lst: list, segment: int = 128):
@@ -192,3 +193,70 @@ def combine_cmap(cmap_lst: list, segment: int = 128):
         c_lst.extend(cmap(np.linspace(0, 1, segment)))
     new_cmap = LinearSegmentedColormap.from_list("combined", c_lst)
     return new_cmap
+
+def add_watermark(input_image_path, output_image_path, watermark_text, 
+                 font_size=70, opacity=0.6, angle=30, spacing=130,
+                 font_path=None, text_color=(255, 255, 255)):
+    """
+    Add watermark to an image
+    
+    Args:
+        input_image_path (str): Path to the input image
+        output_image_path (str): Path to save the output image
+        watermark_text (str): Text content for the watermark
+        font_size (int): Font size, default 40
+        opacity (float): Opacity (0-1), default 0.5
+        angle (int): Watermark rotation angle, default 30 degrees
+        spacing (int): Spacing between watermarks, default 200
+        font_path (str): Path to font file, uses system font by default
+        text_color (tuple): Text color (R,G,B), default white (255,255,255)
+    """
+    try:
+        # Open original image
+        original_image = Image.open(input_image_path).convert("RGBA")
+        width, height = original_image.size
+        
+        # Create a transparent watermark layer
+        watermark = Image.new("RGBA", original_image.size, (0, 0, 0, 0))
+        
+        # Use specified font or default font
+        try:
+            if font_path:
+                font = ImageFont.truetype(font_path, font_size)
+            else:
+                font = ImageFont.load_default()
+                # Adjust default font size
+                font = ImageFont.truetype("simsun.ttc", font_size)  # Try using common font
+        except:
+            font = ImageFont.load_default()
+            print("Warning: Using default font, which may affect quality. Consider specifying a font path.")
+        
+        # Create drawing object
+        draw = ImageDraw.Draw(watermark)
+        
+        # Calculate text size - using the new textbbox method
+        text_bbox = draw.textbbox((0, 0), watermark_text, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+        
+        # Tile watermarks across the entire image
+        for x in range(0, width, text_width + spacing):
+            for y in range(0, height, text_height + spacing):
+                # Draw watermark at each position
+                draw.text((x, y), watermark_text, font=font, fill=text_color + (int(255 * opacity),))
+        
+        # Rotate watermark layer
+        watermark = watermark.rotate(angle, expand=0, resample=Image.BICUBIC)
+        
+        # Merge original image and watermark layer
+        watermarked_image = Image.alpha_composite(original_image, watermark)
+        
+        # Save image
+        if output_image_path.lower().endswith('.jpg') or output_image_path.lower().endswith('.jpeg'):
+            watermarked_image = watermarked_image.convert("RGB")
+        watermarked_image.save(output_image_path)
+        
+        print(f"Watermark added successfully, image saved to: {output_image_path}")
+    
+    except Exception as e:
+        print(f"Error adding watermark: {e}")
