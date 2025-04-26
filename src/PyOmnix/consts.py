@@ -38,6 +38,10 @@ SUMMARIZE_PROMPT_HUMAN = """
 Please summarize the conversation above
 """
 
+SUCCESS_ICON = "✔️"
+ERROR_ICON = "❌"
+WAIT_ICON = "⏳"
+
 
 def set_paths(*, omnix_path: Path | str | None = None) -> None:
     """
