@@ -192,7 +192,6 @@ class CompanyNews(BaseModel):
 
     ticker: str
     title: str
-    author: str
     source: str
     date: str  # For US market, this is the publication date
     url: str

@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage
 from pyomnix.consts import OMNIX_PATH
 from pyomnix.omnix_logger import get_logger
 
-from .. import get_company_news, get_insider_trades
+from .. import get_stock_news, get_insider_trades
 from ..data_models import SentimentAnalysis
 from ..utils.llm import call_llm
 from ..utils.progress import progress
@@ -43,7 +43,7 @@ def get_news_sentiment(
     # 生成新闻内容的唯一标识
     news_key = "|".join(
         [
-            f"{news.title}|{news.content[:100] if news.content else ''}|{news.publish_time}"
+            f"{news.title}|{news.content[:100] if news.content else ''}|{news.date}"
             for news in news_list[:num_of_news]
         ]
     )
@@ -167,7 +167,7 @@ def sentiment_agent(state: AgentState):
         progress.update_status("sentiment_agent", ticker, "Fetching data")
 
         # 1. Process news sentiment (来自第二版核心算法)
-        news_list = get_company_news(ticker, end_date, limit=num_of_news)
+        news_list = get_stock_news(ticker, end_date, limit=num_of_news)
         recent_news = [
             n
             for n in news_list

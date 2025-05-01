@@ -6,7 +6,7 @@ This module provides financial data analysis tools for both US and Chinese marke
 
 # Import the unified API functions for easy access
 from .unified_api import (
-    get_company_news,
+    get_stock_news,
     get_financial_metrics,
     get_insider_trades,
     get_market_cap,
