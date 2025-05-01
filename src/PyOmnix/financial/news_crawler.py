@@ -5,7 +5,13 @@ from datetime import datetime
 import akshare as ak
 import pandas as pd
 
-from .openrouter_config import get_chat_completion
+from pyomnix.consts import OMNIX_PATH
+from pyomnix.omnix_logger import get_logger
+
+from .utils.llm import call_llm
+from .data_models import SentimentAnalysis
+
+logger = get_logger("news_crawler")
 
 
 def get_stock_news(symbol: str, max_news: int = 10) -> list:
@@ -32,55 +38,53 @@ def get_stock_news(symbol: str, max_news: int = 10) -> list:
     today = datetime.now().strftime("%Y-%m-%d")
 
     # 构建新闻文件路径
-    # project_root = os.path.dirname(os.path.dirname(
-    #     os.path.dirname(os.path.abspath(__file__))))
-    news_dir = os.path.join("src", "data", "stock_news")
+    news_dir = OMNIX_PATH / "financial" / "stock_news"
     print(f"新闻保存目录: {news_dir}")
 
     # 确保目录存在
     try:
         os.makedirs(news_dir, exist_ok=True)
-        print(f"成功创建或确认目录存在: {news_dir}")
+        logger.debug(f"成功创建或确认目录存在: {news_dir}")
     except Exception as e:
-        print(f"创建目录失败: {e}")
+        logger.error(f"创建目录失败: {e}")
         return []
 
-    news_file = os.path.join(news_dir, f"{symbol}_news.json")
-    print(f"新闻文件路径: {news_file}")
+    news_file = news_dir / f"{symbol}_news.json"
+    logger.info(f"新闻文件路径: {news_file}")
 
     # 检查是否需要更新新闻
     need_update = True
-    if os.path.exists(news_file):
+    if news_file.exists():
         try:
             with open(news_file, encoding="utf-8") as f:
                 data = json.load(f)
                 if data.get("date") == today:
                     cached_news = data.get("news", [])
                     if len(cached_news) >= max_news:
-                        print(f"使用缓存的新闻数据: {news_file}")
+                        logger.info(f"使用缓存的新闻数据: {news_file}")
                         return cached_news[:max_news]
                     else:
-                        print(
+                        logger.info(
                             f"缓存的新闻数量({len(cached_news)})不足，需要获取更多新闻({max_news}条)"
                         )
         except Exception as e:
             print(f"读取缓存文件失败: {e}")
 
-    print(f"开始获取{symbol}的新闻数据...")
+    logger.info(f"开始获取{symbol}的新闻数据...")
 
     try:
         # 获取新闻列表
         news_df = ak.stock_news_em(symbol=symbol)
         if news_df is None or len(news_df) == 0:
-            print(f"未获取到{symbol}的新闻数据")
+            logger.warning(f"未获取到{symbol}的新闻数据")
             return []
 
-        print(f"成功获取到{len(news_df)}条新闻")
+        logger.info(f"成功获取到{len(news_df)}条新闻")
 
         # 实际可获取的新闻数量
         available_news_count = len(news_df)
         if available_news_count < max_news:
-            print(
+            logger.warning(
                 f"警告：实际可获取的新闻数量({available_news_count})少于请求的数量({max_news})"
             )
             max_news = available_news_count
@@ -148,7 +152,7 @@ def get_stock_news(symbol: str, max_news: int = 10) -> list:
         return []
 
 
-def get_news_sentiment(news_list: list, num_of_news: int = 5) -> float:
+def get_news_sentiment(news_list: list, num_of_news: int = 7) -> float:
     """分析新闻情感得分
 
     Args:
@@ -161,14 +165,8 @@ def get_news_sentiment(news_list: list, num_of_news: int = 5) -> float:
     if not news_list:
         return 0.0
 
-    # # 获取项目根目录
-    # project_root = os.path.dirname(os.path.dirname(
-    #     os.path.dirname(os.path.abspath(__file__))))
-
-    # 检查是否有缓存的情感分析结果
-    # 检查是否有缓存的情感分析结果
-    cache_file = "src/data/sentiment_cache.json"
-    os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+    cache_file = OMNIX_PATH / "financial" / "sentiment_cache.json"
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
 
     # 生成新闻内容的唯一标识
     news_key = "|".join(
@@ -179,14 +177,14 @@ def get_news_sentiment(news_list: list, num_of_news: int = 5) -> float:
     )
 
     # 检查缓存
-    if os.path.exists(cache_file):
+    if cache_file.exists():
         print("发现情感分析缓存文件")
         try:
             with open(cache_file, encoding="utf-8") as f:
                 cache = json.load(f)
                 if news_key in cache:
                     print("使用缓存的情感分析结果")
-                    return cache[news_key]
+                    return cache[news_key]["sentiment_score"]
                 print("未找到匹配的情感分析缓存")
         except Exception as e:
             print(f"读取情感分析缓存出错: {e}")
@@ -198,14 +196,16 @@ def get_news_sentiment(news_list: list, num_of_news: int = 5) -> float:
     # 准备系统消息
     system_message = {
         "role": "system",
-        "content": """你是一个专业的A股市场分析师，擅长解读新闻对股票走势的影响。你需要分析一组新闻的情感倾向，并给出一个介于-1到1之间的分数：
-        - 1表示极其积极（例如：重大利好消息、超预期业绩、行业政策支持）
-        - 0.5到0.9表示积极（例如：业绩增长、新项目落地、获得订单）
-        - 0.1到0.4表示轻微积极（例如：小额合同签订、日常经营正常）
-        - 0表示中性（例如：日常公告、人事变动、无重大影响的新闻）
-        - -0.1到-0.4表示轻微消极（例如：小额诉讼、非核心业务亏损）
-        - -0.5到-0.9表示消极（例如：业绩下滑、重要客户流失、行业政策收紧）
-        - -1表示极其消极（例如：重大违规、核心业务严重亏损、被监管处罚）
+        "content": """你是一个专业的A股市场分析师，擅长解读新闻对股票走势的影响。你需要：
+        1. 根据预设评分标准分析新闻情感倾向
+        2. 输出结构化分析结果（含评分、置信度、分析依据）
+
+        评分标准速查：
+        - 评分范围：[-1,1]，数值越大越积极
+        - 示例参照：
+          1.0 → 重大利好（如超预期财报）
+          0.6 → 常规利好（如新订单）
+          -0.8 → 严重利空（如财务造假）
 
         分析时重点关注：
         1. 业绩相关：财报、业绩预告、营收利润等
@@ -236,32 +236,31 @@ def get_news_sentiment(news_list: list, num_of_news: int = 5) -> float:
 
     user_message = {
         "role": "user",
-        "content": f"请分析以下A股上市公司相关新闻的情感倾向：\n\n{news_content}\n\n请直接返回一个数字，范围是-1到1，无需解释。",
+        "content": f"请分析以下A股上市公司相关新闻的情感倾向：\n{news_content}",
     }
 
     try:
         # 获取LLM分析结果
-        result = get_chat_completion([system_message, user_message])
+        result = call_llm(
+            prompt=user_message["content"],
+            system_prompt=system_message["content"],
+            model_name="deepseek-chat",  # Default to deepseek-chat for sentiment analysis
+            provider_api="deepseek",  # Default to deepseek
+            pydantic_model=SentimentAnalysis,
+            agent_name="news_sentiment",
+        )
         if result is None:
-            print("Error: PI error occurred, LLM returned None")
+            print("Error: LLM API call failed, returned None")
             return 0.0
 
-        # 提取数字结果
-        try:
-            sentiment_score = float(result.strip())
-        except ValueError as e:
-            print(f"Error parsing sentiment score: {e}")
-            print(f"Raw result: {result}")
-            return 0.0
+        sentiment_score = result.sentiment_score
 
-        # 确保分数在-1到1之间
-        sentiment_score = max(-1.0, min(1.0, sentiment_score))
-
-        # 缓存结果
-        cache[news_key] = sentiment_score
+        cache["sentiment_score"] = sentiment_score
+        cache["confidence"] = result.confidence
+        cache["reasoning"] = result.reasoning
         try:
             with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump(cache, f, ensure_ascii=False, indent=2)
+                json.dump({news_key: cache}, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"Error writing cache: {e}")
 

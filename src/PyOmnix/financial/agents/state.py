@@ -69,3 +69,5 @@ def show_agent_reasoning(output, agent_name):
         except json.JSONDecodeError:
             # Fallback to original string if not valid JSON
             logger.info(output)
+
+    logger.info(f"{'=' * 20} {agent_name} Analysis Details {'=' * 20}")

@@ -1,124 +1,191 @@
-import ast
+"""
+Bullish Researcher Agent
+
+Analyzes signals from a bullish perspective and generates optimistic investment thesis.
+"""
+
 import json
+from typing import Literal
 
 from langchain_core.messages import HumanMessage
+from pydantic import BaseModel, Field
 
-from ..api_utils import agent_endpoint
-from .state import AgentState, show_agent_reasoning, show_workflow_status
+from pyomnix.omnix_logger import get_logger
+
+from ..utils.progress import progress
+from .state import AgentState, show_agent_reasoning
+
+# 设置日志记录
+logger = get_logger("researcher_bull_agent")
 
 
-@agent_endpoint("researcher_bull", "多方研究员，从看多角度分析市场数据并提出投资论点")
-def researcher_bull_agent(state: AgentState):
-    """Analyzes signals from a bullish perspective and generates optimistic investment thesis."""
-    show_workflow_status("Bullish Researcher")
-    show_reasoning = state["metadata"]["show_reasoning"]
+class BullishThesis(BaseModel):
+    """Model for the bullish thesis output."""
 
-    # Fetch messages from analysts
-    technical_message = next(
-        msg for msg in state["messages"] if msg.name == "technical_analyst_agent"
+    perspective: Literal["bullish"] = "bullish"
+    confidence: float = Field(description="Confidence level between 0 and 1")
+    thesis_points: list[str] = Field(description="List of bullish thesis points")
+    reasoning: str = Field(description="Reasoning behind the bullish thesis")
+
+
+def researcher_bull_agent(state: AgentState) -> AgentState:
+    """
+    Analyzes signals from a bullish perspective and generates optimistic investment thesis.
+
+    Args:
+        state: The current state of the agent system
+
+    Returns:
+        Updated state with bullish thesis
+    """
+    progress.update_status(
+        "researcher_bull_agent", None, "Analyzing from bullish perspective"
     )
-    fundamentals_message = next(
-        msg for msg in state["messages"] if msg.name == "fundamentals_agent"
-    )
-    sentiment_message = next(
-        msg for msg in state["messages"] if msg.name == "sentiment_agent"
-    )
-    valuation_message = next(
-        msg for msg in state["messages"] if msg.name == "valuation_agent"
-    )
+    show_reasoning = state["metadata"].get("show_reasoning", False)
 
-    try:
-        fundamental_signals = json.loads(fundamentals_message.content)
-        technical_signals = json.loads(technical_message.content)
-        sentiment_signals = json.loads(sentiment_message.content)
-        valuation_signals = json.loads(valuation_message.content)
-    except Exception:
-        fundamental_signals = ast.literal_eval(fundamentals_message.content)
-        technical_signals = ast.literal_eval(technical_message.content)
-        sentiment_signals = ast.literal_eval(sentiment_message.content)
-        valuation_signals = ast.literal_eval(valuation_message.content)
+    # Get the tickers
+    tickers = state["data"].get("tickers", [])
 
-    # Analyze from bullish perspective
-    bullish_points = []
-    confidence_scores = []
+    # Initialize results container
+    bullish_analyses: dict[str, BullishThesis] = {}
 
-    # Technical Analysis
-    if technical_signals["signal"] == "bullish":
-        bullish_points.append(
-            f"Technical indicators show bullish momentum with {technical_signals['confidence']} confidence"
+    for ticker in tickers:
+        progress.update_status(
+            "researcher_bull_agent", ticker, "Collecting analyst signals"
         )
-        confidence_scores.append(
-            float(str(technical_signals["confidence"]).replace("%", "")) / 100
-        )
-    else:
-        bullish_points.append(
-            "Technical indicators may be conservative, presenting buying opportunities"
-        )
-        confidence_scores.append(0.3)
 
-    # Fundamental Analysis
-    if fundamental_signals["signal"] == "bullish":
-        bullish_points.append(
-            f"Strong fundamentals with {fundamental_signals['confidence']} confidence"
-        )
-        confidence_scores.append(
-            float(str(fundamental_signals["confidence"]).replace("%", "")) / 100
-        )
-    else:
-        bullish_points.append("Company fundamentals show potential for improvement")
-        confidence_scores.append(0.3)
+        # Get analyst signals for this ticker
+        analyst_signals = state["data"].get("analyst_signals", {})
 
-    # Sentiment Analysis
-    if sentiment_signals["signal"] == "bullish":
-        bullish_points.append(
-            f"Positive market sentiment with {sentiment_signals['confidence']} confidence"
+        # Fetch signals from different analysts
+        technical_signals = analyst_signals.get("technical_analyst_agent", {}).get(
+            ticker, {}
         )
-        confidence_scores.append(
-            float(str(sentiment_signals["confidence"]).replace("%", "")) / 100
+        fundamental_signals = analyst_signals.get("fundamentals_agent", {}).get(
+            ticker, {}
         )
-    else:
-        bullish_points.append(
-            "Market sentiment may be overly pessimistic, creating value opportunities"
+        sentiment_signals = analyst_signals.get("sentiment_agent", {}).get(ticker, {})
+        valuation_signals = analyst_signals.get("valuation_agent", {}).get(ticker, {})
+
+        # Analyze from bullish perspective
+        bullish_points = []
+        confidence_scores = []
+
+        progress.update_status(
+            "researcher_bull_agent", ticker, "Analyzing technical signals"
         )
-        confidence_scores.append(0.3)
+        # Technical Analysis
+        if technical_signals.get("signal") == "bullish":
+            bullish_points.append(
+                f"Technical indicators show bullish momentum with {technical_signals.get('confidence')}% confidence"
+            )
+            confidence_scores.append(
+                float(technical_signals.get("confidence", 0)) / 100
+            )
+        else:
+            bullish_points.append(
+                "Technical indicators may be conservative, presenting buying opportunities"
+            )
+            confidence_scores.append(0.3)
 
-    # Valuation Analysis
-    if valuation_signals["signal"] == "bullish":
-        bullish_points.append(
-            f"Stock appears undervalued with {valuation_signals['confidence']} confidence"
+        progress.update_status(
+            "researcher_bull_agent", ticker, "Analyzing fundamental signals"
         )
-        confidence_scores.append(
-            float(str(valuation_signals["confidence"]).replace("%", "")) / 100
+        # Fundamental Analysis
+        if fundamental_signals.get("signal") == "bullish":
+            bullish_points.append(
+                f"Strong fundamentals with {fundamental_signals.get('confidence')}% confidence"
+            )
+            confidence_scores.append(
+                float(fundamental_signals.get("confidence", 0)) / 100
+            )
+        else:
+            bullish_points.append("Company fundamentals show potential for improvement")
+            confidence_scores.append(0.3)
+
+        progress.update_status(
+            "researcher_bull_agent", ticker, "Analyzing sentiment signals"
         )
-    else:
-        bullish_points.append(
-            "Current valuation may not fully reflect growth potential"
+        # Sentiment Analysis
+        if sentiment_signals.get("signal") == "bullish":
+            bullish_points.append(
+                f"Positive market sentiment with {sentiment_signals.get('confidence')}% confidence"
+            )
+            confidence_scores.append(
+                float(sentiment_signals.get("confidence", 0)) / 100
+            )
+        else:
+            bullish_points.append(
+                "Market sentiment may be overly pessimistic, creating value opportunities"
+            )
+            confidence_scores.append(0.3)
+
+        progress.update_status(
+            "researcher_bull_agent", ticker, "Analyzing valuation signals"
         )
-        confidence_scores.append(0.3)
+        # Valuation Analysis
+        if valuation_signals.get("signal") == "bullish":
+            bullish_points.append(
+                f"Stock appears undervalued with {valuation_signals.get('confidence')}% confidence"
+            )
+            confidence_scores.append(
+                float(valuation_signals.get("confidence", 0)) / 100
+            )
+        else:
+            bullish_points.append(
+                "Current valuation may not fully reflect growth potential"
+            )
+            confidence_scores.append(0.3)
 
-    # Calculate overall bullish confidence
-    avg_confidence = sum(confidence_scores) / len(confidence_scores)
+        # Calculate overall bullish confidence
+        avg_confidence = (
+            sum(confidence_scores) / len(confidence_scores)
+            if confidence_scores
+            else 0.5
+        )
 
-    message_content = {
-        "perspective": "bullish",
-        "confidence": avg_confidence,
-        "thesis_points": bullish_points,
-        "reasoning": "Bullish thesis based on comprehensive analysis of technical, fundamental, sentiment, and valuation factors",
-    }
+        # Create the bullish thesis
+        bullish_thesis = BullishThesis(
+            perspective="bullish",
+            confidence=avg_confidence,
+            thesis_points=bullish_points,
+            reasoning="Bullish thesis based on comprehensive analysis of technical, fundamental, sentiment, and valuation factors",
+        )
 
-    message = HumanMessage(
-        content=json.dumps(message_content),
-        name="researcher_bull_agent",
-    )
+        bullish_analyses[ticker] = bullish_thesis
+        progress.update_status(
+            "researcher_bull_agent", ticker, "Bullish analysis complete"
+        )
 
-    if show_reasoning:
-        show_agent_reasoning(message_content, "Bullish Researcher")
-        # 保存推理信息到metadata供API使用
-        state["metadata"]["agent_reasoning"] = message_content
+    # Create messages for each ticker
+    messages = state["messages"].copy()
+    for ticker, thesis in bullish_analyses.items():
+        message = HumanMessage(
+            content=json.dumps(thesis.model_dump()),
+            name="researcher_bull_agent",
+        )
+        messages.append(message)
 
-    show_workflow_status("Bullish Researcher", "completed")
+        if show_reasoning:
+            show_agent_reasoning(thesis.model_dump(), f"Bullish Researcher - {ticker}")
+
+    # Update state metadata
+    if bullish_analyses and show_reasoning:
+        state["metadata"]["agent_reasoning"] = next(
+            iter(bullish_analyses.values())
+        ).model_dump()
+
+    progress.update_status("researcher_bull_agent", None, "Done")
+
+    # Update state with bullish analyses
     return {
-        "messages": state["messages"] + [message],
-        "data": state["data"],
+        "messages": messages,
+        "data": {
+            **state["data"],
+            "bullish_analyses": {
+                ticker: analysis.model_dump()
+                for ticker, analysis in bullish_analyses.items()
+            },
+        },
         "metadata": state["metadata"],
     }

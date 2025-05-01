@@ -1,122 +1,191 @@
-import ast
+"""
+Bearish Researcher Agent
+
+Analyzes signals from a bearish perspective and generates cautionary investment thesis.
+"""
+
 import json
+from typing import Literal
 
 from langchain_core.messages import HumanMessage
+from pydantic import BaseModel, Field
 
-from ..api_utils import agent_endpoint
-from .state import AgentState, show_agent_reasoning, show_workflow_status
+from pyomnix.omnix_logger import get_logger
+
+from ..utils.progress import progress
+from .state import AgentState, show_agent_reasoning
+
+# 设置日志记录
+logger = get_logger("researcher_bear_agent")
 
 
-@agent_endpoint("researcher_bear", "空方研究员，从看空角度分析市场数据并提出风险警示")
-def researcher_bear_agent(state: AgentState):
-    """Analyzes signals from a bearish perspective and generates cautionary investment thesis."""
-    show_workflow_status("Bearish Researcher")
-    show_reasoning = state["metadata"]["show_reasoning"]
+class BearishThesis(BaseModel):
+    """Model for the bearish thesis output."""
 
-    # Fetch messages from analysts
-    technical_message = next(
-        msg for msg in state["messages"] if msg.name == "technical_analyst_agent"
+    perspective: Literal["bearish"] = "bearish"
+    confidence: float = Field(description="Confidence level between 0 and 1")
+    thesis_points: list[str] = Field(description="List of bearish thesis points")
+    reasoning: str = Field(description="Reasoning behind the bearish thesis")
+
+
+def researcher_bear_agent(state: AgentState) -> AgentState:
+    """
+    Analyzes signals from a bearish perspective and generates cautionary investment thesis.
+
+    Args:
+        state: The current state of the agent system
+
+    Returns:
+        Updated state with bearish thesis
+    """
+    progress.update_status(
+        "researcher_bear_agent", None, "Analyzing from bearish perspective"
     )
-    fundamentals_message = next(
-        msg for msg in state["messages"] if msg.name == "fundamentals_agent"
-    )
-    sentiment_message = next(
-        msg for msg in state["messages"] if msg.name == "sentiment_agent"
-    )
-    valuation_message = next(
-        msg for msg in state["messages"] if msg.name == "valuation_agent"
-    )
+    show_reasoning = state["metadata"].get("show_reasoning", False)
 
-    try:
-        fundamental_signals = json.loads(fundamentals_message.content)
-        technical_signals = json.loads(technical_message.content)
-        sentiment_signals = json.loads(sentiment_message.content)
-        valuation_signals = json.loads(valuation_message.content)
-    except Exception:
-        fundamental_signals = ast.literal_eval(fundamentals_message.content)
-        technical_signals = ast.literal_eval(technical_message.content)
-        sentiment_signals = ast.literal_eval(sentiment_message.content)
-        valuation_signals = ast.literal_eval(valuation_message.content)
+    # Get the tickers
+    tickers = state["data"].get("tickers", [])
 
-    # Analyze from bearish perspective
-    bearish_points = []
-    confidence_scores = []
+    # Initialize results container
+    bearish_analyses: dict[str, BearishThesis] = {}
 
-    # Technical Analysis
-    if technical_signals["signal"] == "bearish":
-        bearish_points.append(
-            f"Technical indicators show bearish momentum with {technical_signals['confidence']} confidence"
+    for ticker in tickers:
+        progress.update_status(
+            "researcher_bear_agent", ticker, "Collecting analyst signals"
         )
-        confidence_scores.append(
-            float(str(technical_signals["confidence"]).replace("%", "")) / 100
-        )
-    else:
-        bearish_points.append(
-            "Technical rally may be temporary, suggesting potential reversal"
-        )
-        confidence_scores.append(0.3)
 
-    # Fundamental Analysis
-    if fundamental_signals["signal"] == "bearish":
-        bearish_points.append(
-            f"Concerning fundamentals with {fundamental_signals['confidence']} confidence"
-        )
-        confidence_scores.append(
-            float(str(fundamental_signals["confidence"]).replace("%", "")) / 100
-        )
-    else:
-        bearish_points.append("Current fundamental strength may not be sustainable")
-        confidence_scores.append(0.3)
+        # Get analyst signals for this ticker
+        analyst_signals = state["data"].get("analyst_signals", {})
 
-    # Sentiment Analysis
-    if sentiment_signals["signal"] == "bearish":
-        bearish_points.append(
-            f"Negative market sentiment with {sentiment_signals['confidence']} confidence"
+        # Fetch signals from different analysts
+        technical_signals = analyst_signals.get("technical_analyst_agent", {}).get(
+            ticker, {}
         )
-        confidence_scores.append(
-            float(str(sentiment_signals["confidence"]).replace("%", "")) / 100
+        fundamental_signals = analyst_signals.get("fundamentals_agent", {}).get(
+            ticker, {}
         )
-    else:
-        bearish_points.append(
-            "Market sentiment may be overly optimistic, indicating potential risks"
+        sentiment_signals = analyst_signals.get("sentiment_agent", {}).get(ticker, {})
+        valuation_signals = analyst_signals.get("valuation_agent", {}).get(ticker, {})
+
+        # Analyze from bearish perspective
+        bearish_points = []
+        confidence_scores = []
+
+        progress.update_status(
+            "researcher_bear_agent", ticker, "Analyzing technical signals"
         )
-        confidence_scores.append(0.3)
+        # Technical Analysis
+        if technical_signals.get("signal") == "bearish":
+            bearish_points.append(
+                f"Technical indicators show bearish momentum with {technical_signals.get('confidence')}% confidence"
+            )
+            confidence_scores.append(
+                float(technical_signals.get("confidence", 0)) / 100
+            )
+        else:
+            bearish_points.append(
+                "Technical rally may be temporary, suggesting potential reversal"
+            )
+            confidence_scores.append(0.3)
 
-    # Valuation Analysis
-    if valuation_signals["signal"] == "bearish":
-        bearish_points.append(
-            f"Stock appears overvalued with {valuation_signals['confidence']} confidence"
+        progress.update_status(
+            "researcher_bear_agent", ticker, "Analyzing fundamental signals"
         )
-        confidence_scores.append(
-            float(str(valuation_signals["confidence"]).replace("%", "")) / 100
+        # Fundamental Analysis
+        if fundamental_signals.get("signal") == "bearish":
+            bearish_points.append(
+                f"Concerning fundamentals with {fundamental_signals.get('confidence')}% confidence"
+            )
+            confidence_scores.append(
+                float(fundamental_signals.get("confidence", 0)) / 100
+            )
+        else:
+            bearish_points.append("Current fundamental strength may not be sustainable")
+            confidence_scores.append(0.3)
+
+        progress.update_status(
+            "researcher_bear_agent", ticker, "Analyzing sentiment signals"
         )
-    else:
-        bearish_points.append("Current valuation may not fully reflect downside risks")
-        confidence_scores.append(0.3)
+        # Sentiment Analysis
+        if sentiment_signals.get("signal") == "bearish":
+            bearish_points.append(
+                f"Negative market sentiment with {sentiment_signals.get('confidence')}% confidence"
+            )
+            confidence_scores.append(
+                float(sentiment_signals.get("confidence", 0)) / 100
+            )
+        else:
+            bearish_points.append(
+                "Market sentiment may be overly optimistic, indicating potential risks"
+            )
+            confidence_scores.append(0.3)
 
-    # Calculate overall bearish confidence
-    avg_confidence = sum(confidence_scores) / len(confidence_scores)
+        progress.update_status(
+            "researcher_bear_agent", ticker, "Analyzing valuation signals"
+        )
+        # Valuation Analysis
+        if valuation_signals.get("signal") == "bearish":
+            bearish_points.append(
+                f"Stock appears overvalued with {valuation_signals.get('confidence')}% confidence"
+            )
+            confidence_scores.append(
+                float(valuation_signals.get("confidence", 0)) / 100
+            )
+        else:
+            bearish_points.append(
+                "Current valuation may not fully reflect downside risks"
+            )
+            confidence_scores.append(0.3)
 
-    message_content = {
-        "perspective": "bearish",
-        "confidence": avg_confidence,
-        "thesis_points": bearish_points,
-        "reasoning": "Bearish thesis based on comprehensive analysis of technical, fundamental, sentiment, and valuation factors",
-    }
+        # Calculate overall bearish confidence
+        avg_confidence = (
+            sum(confidence_scores) / len(confidence_scores)
+            if confidence_scores
+            else 0.5
+        )
 
-    message = HumanMessage(
-        content=json.dumps(message_content),
-        name="researcher_bear_agent",
-    )
+        # Create the bearish thesis
+        bearish_thesis = BearishThesis(
+            perspective="bearish",
+            confidence=avg_confidence,
+            thesis_points=bearish_points,
+            reasoning="Bearish thesis based on comprehensive analysis of technical, fundamental, sentiment, and valuation factors",
+        )
 
-    if show_reasoning:
-        show_agent_reasoning(message_content, "Bearish Researcher")
-        # 保存推理信息到metadata供API使用
-        state["metadata"]["agent_reasoning"] = message_content
+        bearish_analyses[ticker] = bearish_thesis
+        progress.update_status(
+            "researcher_bear_agent", ticker, "Bearish analysis complete"
+        )
 
-    show_workflow_status("Bearish Researcher", "completed")
+    # Create messages for each ticker
+    messages = state["messages"].copy()
+    for ticker, thesis in bearish_analyses.items():
+        message = HumanMessage(
+            content=json.dumps(thesis.model_dump()),
+            name="researcher_bear_agent",
+        )
+        messages.append(message)
+
+        if show_reasoning:
+            show_agent_reasoning(thesis.model_dump(), f"Bearish Researcher - {ticker}")
+
+    # Update state metadata
+    if bearish_analyses and show_reasoning:
+        state["metadata"]["agent_reasoning"] = next(
+            iter(bearish_analyses.values())
+        ).model_dump()
+
+    progress.update_status("researcher_bear_agent", None, "Done")
+
+    # Update state with bearish analyses
     return {
-        "messages": state["messages"] + [message],
-        "data": state["data"],
+        "messages": messages,
+        "data": {
+            **state["data"],
+            "bearish_analyses": {
+                ticker: analysis.model_dump()
+                for ticker, analysis in bearish_analyses.items()
+            },
+        },
         "metadata": state["metadata"],
     }
