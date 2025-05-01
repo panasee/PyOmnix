@@ -27,6 +27,7 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.base import messages_to_dict
 from langchain_core.messages.utils import messages_from_dict
+from langchain_core.prompt_values import ChatPromptValue
 from langchain_core.runnables import Runnable
 from langgraph.graph import add_messages
 from PIL import Image
@@ -371,7 +372,9 @@ class ChatMessages(ChatMessagesRaw):
         """
         Convert dictionaries in the messages list to ChatMessage objects.
         """
-        logger.validate(isinstance(v, list), "ChatMessages Init: Messages must be a list.")
+        logger.validate(
+            isinstance(v, list), "ChatMessages Init: Messages must be a list."
+        )
         v_new = []
         for i in v:
             if isinstance(i, BaseMessage):
@@ -514,7 +517,7 @@ class ChatMessages(ChatMessagesRaw):
         *,
         max_tokens: int | None = None,
         temperature: float | None = None,
-        schema: BaseModel | dict | None = None,
+        schema: dict | type = None,
     ) -> AIMessage:
         """
         Request a response from the model. (only supports invoke currently). The response will be appended to the messages and also be returned.
@@ -754,14 +757,14 @@ class ChatRequest(BaseModel):
     model_name: Annotated[
         str, Field(description="The exact model name within the provider")
     ]
-    messages: list[ChatMessages]  # to be able to do batching
+    messages: list[ChatMessages | ChatPromptValue]  # to be able to do batching
     stream: bool = False
     invoke_config: dict[str, str] | None = None
     temperature: float = 0.7
     max_tokens: int | None = None
     timeout: int | None = None
     max_retries: int = 2
-    schema: BaseModel | dict | None = None
+    out_schema: dict | type | None = None
 
     @field_validator("messages", mode="before")
     @classmethod
@@ -769,8 +772,12 @@ class ChatRequest(BaseModel):
         """
         Convert dictionaries in the messages list to ChatMessage objects.
         """
-        logger.validate(isinstance(v, list), "ChatRequest Init: Messages must be a list.")
-        if isinstance(v[0], ChatMessages):
+        logger.validate(
+            isinstance(v, list | ChatPromptValue | ChatMessages), "ChatRequest Init: Messages must be a list or a ChatPromptValue."
+        )
+        if isinstance(v, ChatPromptValue | ChatMessages):
+            return [v]
+        elif isinstance(v[0], ChatMessages):
             return v
         elif isinstance(v[0], list):
             return [ChatMessages(messages=i) for i in v]
@@ -797,9 +804,9 @@ class RawModels:
         """
         Update the token count for the model.
         """
-        logger.validate(
-            isinstance(response, AIMessage), "Response must be an AIMessage."
-        )
+        if not isinstance(response, AIMessage):
+            logger.debug("Response is not AIMessage, cannot count the tokens.")
+            return
         model_name = response.response_metadata["model_name"]
         if model_name not in self.input_tokens[provider]:
             self.input_tokens[provider][model_name] = 0
@@ -830,15 +837,15 @@ class RawModels:
             max_retries=request_details.max_retries,
         )
 
-        if request_details.schema is not None:
-            chat_model = chat_model.with_structured_output(request_details.schema)
+        if request_details.out_schema is not None:
+            chat_model = chat_model.with_structured_output(request_details.out_schema)
 
         if len(request_details.messages) > 1:
             logger.info("Batching messages for %s", chat_model)
             logger.validate(
                 not request_details.stream, "Batch does not support streaming."
             )
-            response = chat_model.batch(request_details.messages)
+            response = chat_model.batch([i.messages for i in request_details.messages])
         else:
             response = (
                 chat_model.invoke(
@@ -865,9 +872,9 @@ class RawModels:
         timeout: int | None = None,
         max_retries: int = 2,
         invoke_config: dict[str, Any] | None = None,
-        schema: BaseModel | dict | None = None,
+        schema: dict | type | None = None,
         **kwargs,
-    ) -> dict | Generator[dict, None, None]:
+    ) -> list[AIMessage | Generator[dict, None, None]]:
         """
         Send a chat completion request to the model.
 
@@ -894,7 +901,7 @@ class RawModels:
             max_tokens=max_tokens,
             timeout=timeout,
             max_retries=max_retries,
-            schema=schema,
+            out_schema=schema,
         )
 
         response = self._get_response(request, **kwargs)
@@ -904,7 +911,7 @@ class RawModels:
             return response
 
         provider = ModelConfig.get_provider_model(request.provider_api)[0]
-        if isinstance(response, AIMessage):
+        if not isinstance(response, list):
             response = [response]
         for r in response:
             self._update_token_count(provider, r)
