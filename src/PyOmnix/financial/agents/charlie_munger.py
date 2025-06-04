@@ -6,7 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
 from .. import (
-    get_company_news,
+    get_stock_news,
     get_financial_metrics,
     get_insider_trades,
     get_market_cap,
@@ -48,24 +48,7 @@ def charlie_munger_agent(state: AgentState):
         )
         financial_line_items = search_line_items(
             ticker,
-            [
-                "revenue",
-                "net_income",
-                "operating_income",
-                "return_on_invested_capital",
-                "gross_margin",
-                "operating_margin",
-                "free_cash_flow",
-                "capital_expenditure",
-                "cash_and_equivalents",
-                "total_debt",
-                "shareholders_equity",
-                "outstanding_shares",
-                "research_and_development",
-                "goodwill_and_intangible_assets",
-            ],
-            end_date,
-            period="annual",
+            period="ttm",
             limit=10,  # Munger examines long-term trends
         )
 
@@ -86,11 +69,11 @@ def charlie_munger_agent(state: AgentState):
 
         progress.update_status("charlie_munger_agent", ticker, "Fetching company news")
         # Munger avoids businesses with frequent negative press
-        company_news = get_company_news(
+        company_news = get_stock_news(
             ticker,
-            end_date,
             # Look back 1 year for news
             start_date=None,
+            end_date=end_date,
             limit=100,
         )
 

@@ -9,7 +9,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
 from .. import (
-    get_company_news,
+    get_stock_news,
     get_financial_metrics,
     get_insider_trades,
     get_market_cap,
@@ -69,17 +69,8 @@ def michael_burry_agent(state: AgentState):
         progress.update_status("michael_burry_agent", ticker, "Fetching line items")
         line_items = search_line_items(
             ticker,
-            [
-                "free_cash_flow",
-                "net_income",
-                "total_debt",
-                "cash_and_equivalents",
-                "total_assets",
-                "total_liabilities",
-                "outstanding_shares",
-                "issuance_or_purchase_of_equity_shares",
-            ],
-            end_date,
+            period="ttm",
+            limit=5,
         )
 
         progress.update_status("michael_burry_agent", ticker, "Fetching insider trades")
@@ -88,8 +79,8 @@ def michael_burry_agent(state: AgentState):
         )
 
         progress.update_status("michael_burry_agent", ticker, "Fetching company news")
-        news = get_company_news(
-            ticker, end_date=end_date, start_date=start_date, limit=250
+        news = get_stock_news(
+            ticker, start_date=start_date, end_date=end_date, limit=250
         )
 
         progress.update_status("michael_burry_agent", ticker, "Fetching market cap")

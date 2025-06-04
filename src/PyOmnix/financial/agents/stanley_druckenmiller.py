@@ -7,7 +7,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
 from .. import (
-    get_company_news,
+    get_stock_news,
     get_financial_metrics,
     get_insider_trades,
     get_market_cap,
@@ -57,28 +57,7 @@ def stanley_druckenmiller_agent(state: AgentState):
         #   - Valuation: net_income, free_cash_flow, ebit, ebitda
         #   - Leverage: total_debt, shareholders_equity
         #   - Liquidity: cash_and_equivalents
-        financial_line_items = search_line_items(
-            ticker,
-            [
-                "revenue",
-                "earnings_per_share",
-                "net_income",
-                "operating_income",
-                "gross_margin",
-                "operating_margin",
-                "free_cash_flow",
-                "capital_expenditure",
-                "cash_and_equivalents",
-                "total_debt",
-                "shareholders_equity",
-                "outstanding_shares",
-                "ebit",
-                "ebitda",
-            ],
-            end_date,
-            period="annual",
-            limit=5,
-        )
+        financial_line_items = search_line_items(ticker, period="ttm", limit=5)
 
         progress.update_status(
             "stanley_druckenmiller_agent", ticker, "Getting market cap"
@@ -93,7 +72,7 @@ def stanley_druckenmiller_agent(state: AgentState):
         progress.update_status(
             "stanley_druckenmiller_agent", ticker, "Fetching company news"
         )
-        company_news = get_company_news(ticker, end_date, start_date=None, limit=50)
+        company_news = get_stock_news(ticker, start_date=start_date, end_date=end_date, limit=50)
 
         progress.update_status(
             "stanley_druckenmiller_agent",

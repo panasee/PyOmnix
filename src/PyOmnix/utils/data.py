@@ -358,7 +358,7 @@ class CacheArray:
             var_crit (float): the criterion of the variance
         """
         if self.cache.size <= self.least_length:
-            logger.warning("Cache is not enough to judge the stability")
+            logger.debug("Cache is not enough to judge the stability")
             var_stable = False
         else:
             if var_crit is None:

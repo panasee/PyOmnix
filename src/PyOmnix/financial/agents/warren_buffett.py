@@ -37,20 +37,7 @@ def warren_buffett_agent(state: AgentState):
         progress.update_status(
             "warren_buffett_agent", ticker, "Gathering financial line items"
         )
-        financial_line_items = search_line_items(
-            ticker,
-            [
-                "capital_expenditure",
-                "depreciation_and_amortization",
-                "net_income",
-                "outstanding_shares",
-                "total_assets",
-                "total_liabilities",
-                "dividends_and_other_cash_distributions",
-                "issuance_or_purchase_of_equity_shares",
-            ],
-            end_date,
-        )
+        financial_line_items = search_line_items(ticker, period="ttm", limit=5)
 
         progress.update_status("warren_buffett_agent", ticker, "Getting market cap")
         # Get current market cap

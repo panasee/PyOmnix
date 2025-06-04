@@ -37,20 +37,7 @@ def ben_graham_agent(state: AgentState):
         )
         financial_line_items = search_line_items(
             ticker,
-            [
-                "earnings_per_share",
-                "revenue",
-                "net_income",
-                "book_value_per_share",
-                "total_assets",
-                "total_liabilities",
-                "current_assets",
-                "current_liabilities",
-                "dividends_and_other_cash_distributions",
-                "outstanding_shares",
-            ],
-            end_date,
-            period="annual",
+            period="ttm",
             limit=10,
         )
 

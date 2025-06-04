@@ -42,20 +42,7 @@ def bill_ackman_agent(state: AgentState):
         # Request multiple periods of data (annual or TTM) for a more robust long-term view.
         financial_line_items = search_line_items(
             ticker,
-            [
-                "revenue",
-                "operating_margin",
-                "debt_to_equity",
-                "free_cash_flow",
-                "total_assets",
-                "total_liabilities",
-                "dividends_and_other_cash_distributions",
-                "outstanding_shares",
-                # Optional: intangible_assets if available
-                # "intangible_assets"
-            ],
-            end_date,
-            period="annual",
+            period="ttm",
             limit=5,
         )
 

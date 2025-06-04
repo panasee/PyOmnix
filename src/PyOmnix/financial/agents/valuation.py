@@ -48,19 +48,7 @@ def valuation_agent(state: AgentState):
 
         # --- Fine‑grained line‑items (need two periods to calc WC change) ---
         progress.update_status("valuation_agent", ticker, "Gathering line items")
-        line_items = search_line_items(
-            ticker=ticker,
-            line_items=[
-                "free_cash_flow",
-                "net_income",
-                "depreciation_and_amortization",
-                "capital_expenditure",
-                "working_capital",
-            ],
-            end_date=end_date,
-            period="ttm",
-            limit=2,
-        )
+        line_items = search_line_items(ticker, period="ttm", limit=2)
         if len(line_items) < 2:
             progress.update_status(
                 "valuation_agent", ticker, "Failed: Insufficient financial line items"

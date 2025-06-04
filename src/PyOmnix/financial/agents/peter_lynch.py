@@ -6,7 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
 from .. import (
-    get_company_news,
+    get_stock_news,
     get_financial_metrics,
     get_insider_trades,
     get_market_cap,
@@ -61,26 +61,7 @@ def peter_lynch_agent(state: AgentState):
             "peter_lynch_agent", ticker, "Gathering financial line items"
         )
         # Relevant line items for Peter Lynch's approach
-        financial_line_items = search_line_items(
-            ticker,
-            [
-                "revenue",
-                "earnings_per_share",
-                "net_income",
-                "operating_income",
-                "gross_margin",
-                "operating_margin",
-                "free_cash_flow",
-                "capital_expenditure",
-                "cash_and_equivalents",
-                "total_debt",
-                "shareholders_equity",
-                "outstanding_shares",
-            ],
-            end_date,
-            period="annual",
-            limit=5,
-        )
+        financial_line_items = search_line_items(ticker, period="ttm", limit=5)
 
         progress.update_status("peter_lynch_agent", ticker, "Getting market cap")
         market_cap = get_market_cap(ticker, end_date)
@@ -89,7 +70,7 @@ def peter_lynch_agent(state: AgentState):
         insider_trades = get_insider_trades(ticker, end_date, start_date=None, limit=50)
 
         progress.update_status("peter_lynch_agent", ticker, "Fetching company news")
-        company_news = get_company_news(ticker, end_date, start_date=None, limit=50)
+        company_news = get_stock_news(ticker, start_date=start_date, end_date=end_date, limit=50)
 
         progress.update_status(
             "peter_lynch_agent", ticker, "Fetching recent price data for reference"

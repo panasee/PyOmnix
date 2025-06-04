@@ -7,7 +7,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
 from .. import (
-    get_company_news,
+    get_stock_news,
     get_financial_metrics,
     get_insider_trades,
     get_market_cap,
@@ -58,27 +58,7 @@ def phil_fisher_agent(state: AgentState):
         #   - Margins & Stability: operating_income, operating_margin, gross_margin
         #   - Management Efficiency & Leverage: total_debt, shareholders_equity, free_cash_flow
         #   - Valuation: net_income, free_cash_flow (for P/E, P/FCF), ebit, ebitda
-        financial_line_items = search_line_items(
-            ticker,
-            [
-                "revenue",
-                "net_income",
-                "earnings_per_share",
-                "free_cash_flow",
-                "research_and_development",
-                "operating_income",
-                "operating_margin",
-                "gross_margin",
-                "total_debt",
-                "shareholders_equity",
-                "cash_and_equivalents",
-                "ebit",
-                "ebitda",
-            ],
-            end_date,
-            period="annual",
-            limit=5,
-        )
+        financial_line_items = search_line_items(ticker, period="ttm", limit=5)
 
         progress.update_status("phil_fisher_agent", ticker, "Getting market cap")
         market_cap = get_market_cap(ticker, end_date)
@@ -87,7 +67,7 @@ def phil_fisher_agent(state: AgentState):
         insider_trades = get_insider_trades(ticker, end_date, start_date=None, limit=50)
 
         progress.update_status("phil_fisher_agent", ticker, "Fetching company news")
-        company_news = get_company_news(ticker, end_date, start_date=None, limit=50)
+        company_news = get_stock_news(ticker, start_date=start_date, end_date=end_date, limit=50)
 
         progress.update_status(
             "phil_fisher_agent", ticker, "Analyzing growth & quality"

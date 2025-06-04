@@ -1389,7 +1389,7 @@ if __name__ == "__main__":
 
     try:
         aapl_items = search_line_items(
-            aapl_ticker, line_items=[], limit=1
+            aapl_ticker,
         )  # Items ignored
         print(f"AAPL Line Items (latest): {aapl_items}")
     except Exception as e:
@@ -1432,7 +1432,7 @@ if __name__ == "__main__":
         print(f"Error getting Tencent news: {e}")
 
     try:
-        tencent_items = search_line_items(tencent_ticker, line_items=[], limit=1)
+        tencent_items = search_line_items(tencent_ticker, limit=1)
         print(f"Tencent Line Items (latest): {tencent_items}")
     except Exception as e:
         print(f"Error getting Tencent line items: {e}")
@@ -1475,7 +1475,7 @@ if __name__ == "__main__":
 
     try:
         moutai_items = search_line_items(
-            moutai_ticker, line_items=[], limit=2
+            moutai_ticker, limit=2
         )  # Get latest 2 periods
         print(f"Moutai Line Items (latest 2): {moutai_items}")
     except Exception as e:

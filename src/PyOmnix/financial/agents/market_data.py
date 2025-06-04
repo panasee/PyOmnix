@@ -101,18 +101,7 @@ def market_data_agent(state: AgentState) -> AgentState:
         )
         try:
             # Common line items to search for
-            line_items = [
-                "revenue",
-                "net_income",
-                "free_cash_flow",
-                "total_assets",
-                "total_liabilities",
-                "total_equity",
-                "cash_and_equivalents",
-                "research_and_development",
-                "capital_expenditure",
-            ]
-            financial_line_items = search_line_items(ticker, line_items, end_date)
+            financial_line_items = search_line_items(ticker, period="ttm", limit=10)
             all_financial_line_items[ticker] = [
                 item.model_dump() for item in financial_line_items
             ]
