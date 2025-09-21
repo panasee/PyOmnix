@@ -75,6 +75,7 @@ class DataManipulator:
             "I": "A",
             "V": "V",
             "R": "Ohm",
+            "G": "S",
             "T": "K",
             "B": "T",
             "f": "Hz",
@@ -1095,8 +1096,8 @@ class DataManipulator:
         """
         preview the colors in the list
         """
-        self.load_settings(False, False)
-        fig, ax, _ = self.init_canvas(1, 1, 13, 7)
+        DataManipulator.load_settings(False, False)
+        fig, ax, _ = DataManipulator.init_canvas(1, 1, 13, 7)
         try:
             if isinstance(color_lst[0], float | int):
                 ax.imshow([[color_lst]])

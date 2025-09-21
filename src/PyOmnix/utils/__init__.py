@@ -4,6 +4,7 @@ Utility functions for the PyOmnix package.
 This module re-exports commonly used utility functions for convenience.
 """
 
+from .files import ShPath
 from .data import (
     CacheArray,
     ObjectArray,

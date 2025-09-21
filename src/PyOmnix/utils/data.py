@@ -35,6 +35,7 @@ class ObjectArray:
             unique: If True, ensures all elements in the array are unique
         """
         self.shape = dims
+        self.size = np.prod(dims)
         self.fill_value = fill_value
         self.unique = unique
         self.objects = self._create_objects(dims) # customized initialization can be implemented by overriding this method
@@ -123,6 +124,10 @@ class ObjectArray:
             ValueError: If unique is True and the value already exists in the array
         """
         if isinstance(index, int):
+            if index == -1:
+                logger.validate(self.pointer_next is not None, "No space to set value")
+                self.__setitem__(self.pointer_next, value)
+                return
             index = np.unravel_index(index, self.shape)
         arr = self.objects
         for idx in index[:-1]:
@@ -174,6 +179,7 @@ class ObjectArray:
         Returns:
             bool: True if the value is unique (or not required uniqueness), False otherwise
         """
+        # if not required uniqueness, return True
         if not self.unique:
             return True
 
@@ -183,6 +189,18 @@ class ObjectArray:
         
         if other_locations:
             return False
+        else:
+            return True
+
+    @property
+    def pointer_next(self) -> int | None:
+        """
+        return the index of the next element that is not filled values by default
+        """
+        for i in range(self.size):
+            if self._are_equal(self[i], self.fill_value):
+                return i
+        return None
 
     def extend(self, *dims: int) -> None:
         """
@@ -328,7 +346,7 @@ class CacheArray:
         self.least_length = least_length
 
     @property
-    def mean(self) -> float:
+    def mean(self) -> float | None:
         """return the mean of the cache"""
         if self.cache.size == 0:
             logger.warning("Cache is empty")
@@ -338,7 +356,7 @@ class CacheArray:
 
     def update_cache(
         self, new_value: float | Sequence[float]
-    ) -> tuple[Sequence[float], bool]:
+    ) -> None:
         """
         update the cache using newest values
         """
