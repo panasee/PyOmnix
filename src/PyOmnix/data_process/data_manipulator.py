@@ -323,26 +323,26 @@ class DataManipulator:
         # create the spherical grid
         u = np.linspace(0, 2 * np.pi, n_meridians)
         v = np.linspace(0, np.pi, n_parallels)
-    
+
         # meridians (half circle from north to south)
         for phi in u:
             x = np.sin(v) * np.cos(phi)
             y = np.sin(v) * np.sin(phi)
             z = np.cos(v)
-            ax.plot(x, y, z, color='gray', alpha=alpha, linestyle='dashed')
-    
+            ax.plot(x, y, z, color="gray", alpha=alpha, linestyle="dashed")
+
         # parallels (parallel circles)
         for theta in v[1:-1]:  # skip the north and south poles
             r = np.sin(theta)
             x = r * np.cos(u)
             y = r * np.sin(u)
             z = np.cos(theta) * np.ones_like(u)
-            ax.plot(x, y, z, color='gray', alpha=alpha, linestyle='dashed')
-    
+            ax.plot(x, y, z, color="gray", alpha=alpha, linestyle="dashed")
+
         # add the axes
-        ax.plot([-1, 1], [0, 0], [0, 0], color='red', alpha=0.5)   # X-axis
-        ax.plot([0, 0], [-1, 1], [0, 0], color='green', alpha=0.5) # Y-axis
-        ax.plot([0, 0], [0, 0], [-1, 1], color='blue', alpha=0.5)  # Z-axis
+        ax.plot([-1, 1], [0, 0], [0, 0], color="red", alpha=0.5)  # X-axis
+        ax.plot([0, 0], [-1, 1], [0, 0], color="green", alpha=0.5)  # Y-axis
+        ax.plot([0, 0], [0, 0], [-1, 1], color="blue", alpha=0.5)  # Z-axis
 
         # set the equal aspect ratio
         ax.set_box_aspect([1, 1, 1])
@@ -418,53 +418,83 @@ class DataManipulator:
             x_grid = np.outer(np.cos(u_grid), np.sin(v_grid))
             y_grid = np.outer(np.sin(u_grid), np.sin(v_grid))
             z_grid = np.outer(np.ones(np.size(u_grid)), np.cos(v_grid))
-            ax.plot_surface(x_grid, y_grid, z_grid, color='blue', alpha=sphere_alpha, rstride=1, cstride=1)
+            ax.plot_surface(
+                x_grid, y_grid, z_grid, color="blue", alpha=sphere_alpha, rstride=1, cstride=1
+            )
 
         if plot_type == "surface":
             # More efficient surface plot using griddata for irregular data
             x_unique = np.unique(x_data)
             y_unique = np.unique(y_data)
-        
+
             if len(x_unique) * len(y_unique) != len(x_data):
                 # Use interpolation for non-grid data
                 from scipy.interpolate import griddata
+
                 points = np.column_stack((x_data, y_data))
                 grid_x, grid_y = np.meshgrid(
                     np.linspace(x_data.min(), x_data.max(), 100),
-                    np.linspace(y_data.min(), y_data.max(), 100)
+                    np.linspace(y_data.min(), y_data.max(), 100),
                 )
-                grid_z = griddata(points, z_data, (grid_x, grid_y), method='cubic')
+                grid_z = griddata(points, z_data, (grid_x, grid_y), method="cubic")
                 X, Y, Z = grid_x, grid_y, grid_z
             else:
                 # Regular grid data
                 X, Y = np.meshgrid(x_unique, y_unique)
                 Z = z_data.reshape(len(y_unique), len(x_unique))
-        
-            surf = ax.plot_surface(X, Y, Z, cmap=cmap, alpha=alpha, 
-                                 rstride=1, cstride=1, linewidth=0, 
-                                 antialiased=False)
+
+            surf = ax.plot_surface(
+                X,
+                Y,
+                Z,
+                cmap=cmap,
+                alpha=alpha,
+                rstride=1,
+                cstride=1,
+                linewidth=0,
+                antialiased=False,
+            )
             if colorbar:
-                fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label=z_col if isinstance(z_col, str) else 'Z')
+                fig.colorbar(
+                    surf,
+                    ax=ax,
+                    shrink=0.5,
+                    aspect=5,
+                    label=z_col if isinstance(z_col, str) else "Z",
+                )
 
         elif plot_type == "scatter":
             if color_lst is None:
                 scatter = ax.scatter(
-                    x_data, y_data, z_data, c=z_data, cmap=cmap, alpha=alpha, s=5, edgecolors='none'
+                    x_data, y_data, z_data, c=z_data, cmap=cmap, alpha=alpha, s=5, edgecolors="none"
                 )
             else:
                 scatter = ax.scatter(
-                    x_data, y_data, z_data, c=color_lst, alpha=alpha, s=5, edgecolors='none'
+                    x_data, y_data, z_data, c=color_lst, alpha=alpha, s=5, edgecolors="none"
                 )
             if colorbar:
-                fig.colorbar(scatter, ax=ax, shrink=0.5, aspect=5, label=z_col if isinstance(z_col, str) else 'Z')
+                fig.colorbar(
+                    scatter,
+                    ax=ax,
+                    shrink=0.5,
+                    aspect=5,
+                    label=z_col if isinstance(z_col, str) else "Z",
+                )
 
         elif plot_type == "line":
-            ax.plot(x_data, y_data, z_data, alpha=alpha,
-                    linewidth=2, marker='o' if len(x_data) <= 100 else None, markersize=4)
+            ax.plot(
+                x_data,
+                y_data,
+                z_data,
+                alpha=alpha,
+                linewidth=2,
+                marker="o" if len(x_data) <= 100 else None,
+                markersize=4,
+            )
 
-        ax.set_xlabel(x_col if isinstance(x_col, str) else 'X')
-        ax.set_ylabel(y_col if isinstance(y_col, str) else 'Y')
-        ax.set_zlabel(z_col if isinstance(z_col, str) else 'Z')
+        ax.set_xlabel(x_col if isinstance(x_col, str) else "X")
+        ax.set_ylabel(y_col if isinstance(y_col, str) else "Y")
+        ax.set_zlabel(z_col if isinstance(z_col, str) else "Z")
 
         if title:
             ax.set_title(title)
@@ -581,8 +611,7 @@ class DataManipulator:
         titles: Sequence[Sequence[str]] | None = None,
         axes_labels: Sequence[Sequence[Sequence[str]]] | None = None,
         line_labels: Sequence[Sequence[Sequence[str]]] | None = None,
-        plot_types: Sequence[Sequence[Literal["scatter", "contour", "heatmap"]]]
-        | None = None,
+        plot_types: Sequence[Sequence[Literal["scatter", "contour", "heatmap"]]] | None = None,
         browser_open: bool = False,
         inline_jupyter: bool = True,
     ) -> None:
@@ -607,19 +636,14 @@ class DataManipulator:
         self.plot_types = plot_types
         # for contour plot, only one "line" is allowed
         traces_per_subplot = [
-            [
-                lines_per_fig if plot_types[i][j] == "scatter" else 1
-                for j in range(n_cols)
-            ]
+            [lines_per_fig if plot_types[i][j] == "scatter" else 1 for j in range(n_cols)]
             for i in range(n_rows)
         ]
         if titles is None:
             titles = [["" for _ in range(n_cols)] for _ in range(n_rows)]
         flat_titles = [item for sublist in titles for item in sublist]
         if axes_labels is None:
-            axes_labels = [
-                [["" for _ in range(2)] for _ in range(n_cols)] for _ in range(n_rows)
-            ]
+            axes_labels = [[["" for _ in range(2)] for _ in range(n_cols)] for _ in range(n_rows)]
         if line_labels is None:
             line_labels = [
                 [["" for _ in range(lines_per_fig)] for _ in range(n_cols)] for _ in range(n_rows)
@@ -656,6 +680,7 @@ class DataManipulator:
                                 y=[],
                                 mode="lines+markers",
                                 name=line_labels[i][j][k],
+                                line=dict(width=1, color="#a47764"),
                             ),
                             row=i + 1,
                             col=j + 1,
@@ -670,21 +695,76 @@ class DataManipulator:
                     data_idx += 1
                 elif plot_type == "heatmap":
                     fig.add_trace(
-                        go.Heatmap(
-                            z=[], x=[], y=[], name=line_labels[i][j][0], zsmooth="best"
+                        go.Heatmap(z=[], x=[], y=[], name=line_labels[i][j][0], zsmooth="best"),
+                        row=i + 1,
+                        col=j + 1,
+                    )
+                    data_idx += 1
+                elif "candle" in plot_type:
+                    fig.add_trace(
+                        go.Candlestick(
+                            x=[],
+                            open=[],
+                            high=[],
+                            low=[],
+                            close=[],
+                            increasing=dict(
+                                line=dict(color="#d42e5b"),
+                                fillcolor="None",
+                            ),
+                            decreasing=dict(
+                                line=dict(color="#009b75"),
+                                fillcolor="None",
+                            ),
                         ),
                         row=i + 1,
                         col=j + 1,
                     )
                     data_idx += 1
                 else:
-                    raise ValueError(
-                        f"Unsupported plot type '{plot_type}' at subplot ({i},{j})"
-                    )
+                    raise ValueError(f"Unsupported plot type '{plot_type}' at subplot ({i},{j})")
                 fig.update_xaxes(title_text=axes_labels[i][j][0], row=i + 1, col=j + 1)
                 fig.update_yaxes(title_text=axes_labels[i][j][1], row=i + 1, col=j + 1)
 
-        fig.update_layout(height=pixel_height, width=pixel_width)
+        fig.update_layout(
+            height=pixel_height,
+            width=pixel_width,
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            hovermode="x",
+            dragmode="zoom",
+            font=dict(family="Times New Roman", size=12),
+        )
+        fig.update_xaxes(
+            tickfont=dict(color="black", size=12),
+            gridcolor="#e0e0e0",
+            gridwidth=0.5,
+            linewidth=1,
+            mirror=True,
+            linecolor="black",
+            showspikes=True,
+            spikecolor="rgba(0,0,0,0.5)",
+            spikesnap="cursor",
+            spikemode="toaxis+across+marker",
+            spikedash="dot",
+            spikethickness=0.9,
+        )
+        fig.update_yaxes(
+            tickfont=dict(color="black", size=12),
+            gridcolor="#E0E0E0",
+            gridwidth=0.5,
+            linewidth=1,
+            mirror=True,
+            showgrid=True,
+            showline=True,
+            linecolor="black",
+            showspikes=True,
+            spikecolor="rgba(0,0,0,0.5)",
+            spikesnap="cursor",
+            spikemode="toaxis+across+marker",
+            spikedash="dot",
+            spikethickness=0.9,
+        )
 
         if is_notebook() and inline_jupyter:
             browser_open = False
@@ -701,9 +781,7 @@ class DataManipulator:
             from dash.dependencies import Input, Output
 
             if inline_jupyter:
-                logger.debug(
-                    "inline_jupyter is not supported in non-notebook environment"
-                )
+                logger.debug("inline_jupyter is not supported in non-notebook environment")
             if not self._dash_app:
                 app = Dash("live_plot_11235")
                 self._dash_app = app
@@ -720,10 +798,31 @@ class DataManipulator:
             @self._dash_app.callback(
                 Output("live-graph", "figure"),
                 Input("interval-component", "n_intervals"),
+                Input("live-graph", "relayoutData"),
                 prevent_initial_call=True,
             )
-            def update_graph(_):
-                return self.go_f
+            def update_graph(_, relayout_data):
+                fig_to_return = go.Figure(self.go_f) 
+                if relayout_data:
+                    layout_update = {}
+                    for key, value in relayout_data.items():
+                        if (key.startswith('x') or key.startswith('y')) and '.range' in key:
+                            axis_name = key.split('.')[0]
+                            if axis_name not in layout_update:
+                                layout_update[axis_name] = {'range': [None, None]}
+                            idx = 0 if '[0]' in key else 1
+                            layout_update[axis_name]['range'][idx] = value
+                        elif (key.startswith('x') or key.startswith('y')) and key.endswith('.autorange'):
+                            axis_name = key.split('.')[0]
+                            layout_update[axis_name] = {'autorange': True}
+                            
+                    if layout_update:
+                        fig_to_return.update_layout(**layout_update)
+                return fig_to_return
+            #def update_graph(_, relayout_data):
+            #    if relayout_data:
+            #        self.go_f.update_layout(relayout_data)
+            #    return self.go_f
 
             # Run Dash server in a separate thread
             def run_dash():
@@ -745,9 +844,7 @@ class DataManipulator:
                 # Give the server a moment to start
                 time.sleep(1)
 
-    def save_fig_periodically(
-        self, plot_path: Path | str, time_interval: int = 60
-    ) -> None:
+    def save_fig_periodically(self, plot_path: Path | str, time_interval: int = 60) -> None:
         """
         save the figure periodically
         this function will be running consistently in the background
@@ -771,9 +868,7 @@ class DataManipulator:
                         )
                         time.sleep(retry_delay)
                     else:
-                        logger.error(
-                            f"Failed to save image after {max_retries} attempts: {e!s}"
-                        )
+                        logger.error(f"Failed to save image after {max_retries} attempts: {e!s}")
 
     def start_saving(self, plot_path: Path | str, time_interval: int = 60) -> None:
         """
@@ -799,12 +894,8 @@ class DataManipulator:
         row: int | tuple[int],
         col: int | tuple[int],
         lineno: int | tuple[int],
-        x_data: Sequence[float | str]
-        | Sequence[Sequence[float | str]]
-        | np.ndarray[float | str],
-        y_data: Sequence[float | str]
-        | Sequence[Sequence[float | str]]
-        | np.ndarray[float | str],
+        x_data: Sequence[float | str] | Sequence[Sequence[float | str]] | np.ndarray[float | str],
+        y_data: Sequence[float | str] | Sequence[Sequence[float | str]] | np.ndarray[float | str],
         z_data: Sequence[float | str]
         | Sequence[Sequence[float | str]]
         | np.ndarray[float | str] = (0,),
@@ -878,9 +969,7 @@ class DataManipulator:
         # dim_tolift = [0, 0, 0]
         with self.go_f.batch_update():
             idx_z = 0
-            for no, (irow, icol, ilineno) in enumerate(
-                zip(row, col, lineno, strict=False)
-            ):
+            for no, (irow, icol, ilineno) in enumerate(zip(row, col, lineno, strict=False)):
                 plot_type = self.plot_types[irow][icol]
                 trace = self.live_dfs[irow][icol][ilineno]
                 if plot_type == "scatter":
@@ -944,9 +1033,7 @@ class DataManipulator:
         if external_file is None:
             localenv_filter = re.compile(r"^PYLAB_DB_LOCAL")
             filtered_vars = {
-                key: value
-                for key, value in os.environ.items()
-                if localenv_filter.match(key)
+                key: value for key, value in os.environ.items() if localenv_filter.match(key)
             }
             used_var = list(filtered_vars.keys())[0]
             if filtered_vars:
@@ -1019,12 +1106,8 @@ class DataManipulator:
             def init_ui(self):
                 self.verticalHeader().setVisible(False)
                 self.horizontalHeader().setVisible(False)
-                self.horizontalHeader().setSectionResizeMode(
-                    QHeaderView.ResizeMode.Stretch
-                )
-                self.verticalHeader().setSectionResizeMode(
-                    QHeaderView.ResizeMode.Stretch
-                )
+                self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+                self.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
                 for r in range(len(self.rgb_mat)):
                     for c in range(48):
