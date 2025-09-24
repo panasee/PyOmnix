@@ -599,6 +599,80 @@ class DataManipulator:
     #################
     # dynamic plots #
     #################
+    @staticmethod
+    def create_plotly_figure(
+        n_rows: int,
+        n_cols: int,
+        pixel_height: float = 600,
+        pixel_width: float = 1200,
+        *,
+        titles: Sequence[Sequence[str]] | None = None,
+        no_layout: bool = False,
+    ) -> go.FigureWidget:
+        """
+        create a plotly figure for subsequent updates,
+        this is a more fundamental function than the live_plot_init,
+        for advanced users who want to customize the figure more
+        """
+        if titles is None:
+            titles = [["" for _ in range(n_cols)] for _ in range(n_rows)]
+        flat_titles = [item for sublist in titles for item in sublist]
+        fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=flat_titles)
+        fig = go.FigureWidget(fig)
+        if not no_layout:
+            DataManipulator.update_layout(fig)
+        fig.update_layout(
+            height=pixel_height,
+            width=pixel_width,
+        )
+        return fig
+
+    @staticmethod
+    def update_layout(fig: go.Figure | go.FigureWidget) -> None:
+        """
+        update the layout of the figure
+        """
+        fig.update_layout(
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            hovermode="x",
+            dragmode="zoom",
+            font=dict(family="Times New Roman", size=12),
+        )
+        fig.update_xaxes(
+            tickfont=dict(color="black", size=12),
+            gridcolor="#e0e0e0",
+            gridwidth=0.5,
+            linewidth=1,
+            mirror=True,
+            linecolor="black",
+            showspikes=True,
+            spikecolor="rgba(0,0,0,0.5)",
+            spikesnap="cursor",
+            spikemode="toaxis+across+marker",
+            spikedash="dot",
+            spikethickness=0.9,
+            rangebreaks=[
+                dict(bounds=["sat", "mon"]),
+            ],
+        )
+        fig.update_yaxes(
+            tickfont=dict(color="black", size=12),
+            gridcolor="#E0E0E0",
+            gridwidth=0.5,
+            linewidth=1,
+            fixedrange=False,
+            mirror=True,
+            showgrid=True,
+            showline=True,
+            linecolor="black",
+            showspikes=True,
+            spikecolor="rgba(0,0,0,0.5)",
+            spikesnap="cursor",
+            spikemode="toaxis+across+marker",
+            spikedash="dot",
+            spikethickness=0.9,
+        )
 
     def live_plot_init(
         self,
@@ -710,11 +784,11 @@ class DataManipulator:
                             close=[],
                             increasing=dict(
                                 line=dict(color="#d42e5b"),
-                                fillcolor="None",
+                                fillcolor=None,
                             ),
                             decreasing=dict(
                                 line=dict(color="#009b75"),
-                                fillcolor="None",
+                                fillcolor=None,
                             ),
                         ),
                         row=i + 1,
@@ -726,46 +800,11 @@ class DataManipulator:
                 fig.update_xaxes(title_text=axes_labels[i][j][0], row=i + 1, col=j + 1)
                 fig.update_yaxes(title_text=axes_labels[i][j][1], row=i + 1, col=j + 1)
 
+        DataManipulator.update_layout(fig)
         fig.update_layout(
             height=pixel_height,
             width=pixel_width,
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-            hovermode="x",
-            dragmode="zoom",
-            font=dict(family="Times New Roman", size=12),
         )
-        fig.update_xaxes(
-            tickfont=dict(color="black", size=12),
-            gridcolor="#e0e0e0",
-            gridwidth=0.5,
-            linewidth=1,
-            mirror=True,
-            linecolor="black",
-            showspikes=True,
-            spikecolor="rgba(0,0,0,0.5)",
-            spikesnap="cursor",
-            spikemode="toaxis+across+marker",
-            spikedash="dot",
-            spikethickness=0.9,
-        )
-        fig.update_yaxes(
-            tickfont=dict(color="black", size=12),
-            gridcolor="#E0E0E0",
-            gridwidth=0.5,
-            linewidth=1,
-            mirror=True,
-            showgrid=True,
-            showline=True,
-            linecolor="black",
-            showspikes=True,
-            spikecolor="rgba(0,0,0,0.5)",
-            spikesnap="cursor",
-            spikemode="toaxis+across+marker",
-            spikedash="dot",
-            spikethickness=0.9,
-        )
-
         if is_notebook() and inline_jupyter:
             browser_open = False
             from IPython.display import display
@@ -802,24 +841,27 @@ class DataManipulator:
                 prevent_initial_call=True,
             )
             def update_graph(_, relayout_data):
-                fig_to_return = go.Figure(self.go_f) 
+                fig_to_return = go.Figure(self.go_f)
                 if relayout_data:
                     layout_update = {}
                     for key, value in relayout_data.items():
-                        if (key.startswith('x') or key.startswith('y')) and '.range' in key:
-                            axis_name = key.split('.')[0]
+                        if (key.startswith("x") or key.startswith("y")) and ".range" in key:
+                            axis_name = key.split(".")[0]
                             if axis_name not in layout_update:
-                                layout_update[axis_name] = {'range': [None, None]}
-                            idx = 0 if '[0]' in key else 1
-                            layout_update[axis_name]['range'][idx] = value
-                        elif (key.startswith('x') or key.startswith('y')) and key.endswith('.autorange'):
-                            axis_name = key.split('.')[0]
-                            layout_update[axis_name] = {'autorange': True}
-                            
+                                layout_update[axis_name] = {"range": [None, None]}
+                            idx = 0 if "[0]" in key else 1
+                            layout_update[axis_name]["range"][idx] = value
+                        elif (key.startswith("x") or key.startswith("y")) and key.endswith(
+                            ".autorange"
+                        ):
+                            axis_name = key.split(".")[0]
+                            layout_update[axis_name] = {"autorange": True}
+
                     if layout_update:
                         fig_to_return.update_layout(**layout_update)
                 return fig_to_return
-            #def update_graph(_, relayout_data):
+
+            # def update_graph(_, relayout_data):
             #    if relayout_data:
             #        self.go_f.update_layout(relayout_data)
             #    return self.go_f
@@ -895,7 +937,10 @@ class DataManipulator:
         col: int | tuple[int],
         lineno: int | tuple[int],
         x_data: Sequence[float | str] | Sequence[Sequence[float | str]] | np.ndarray[float | str],
-        y_data: Sequence[float | str] | Sequence[Sequence[float | str]] | np.ndarray[float | str],
+        y_data: Sequence[float | str]
+        | Sequence[Sequence[float | str]]
+        | np.ndarray[float | str]
+        | None = None,
         z_data: Sequence[float | str]
         | Sequence[Sequence[float | str]]
         | np.ndarray[float | str] = (0,),
@@ -919,7 +964,7 @@ class DataManipulator:
         - col: the column of the subplot (from 0)
         - lineno: the line no. of the subplot (from 0)
         - x_data: the array-like x data (not support single number, use [x] or (x,) instead)
-        - y_data: the array-like y data (not support single number, use [y] or (y,) instead)
+        - y_data: the array-like y data (not support single number, use [y] or (y,) instead), if None, x_data should be candlestick dataframe or list of candlestick dataframes
         - z_data: the array-like z data (for contour plot only, be the same length as no of contour plots)
         - incremental: whether to update the data incrementally
         - max_points: the maximum number of points to be plotted, if None, no limit, only affect incremental line plots
@@ -954,25 +999,54 @@ class DataManipulator:
                     return np.array(data_arr)
                 return np.array(data_arr, dtype=np.float32)
 
+        if_candle = y_data is None
+        if if_candle:
+            logger.info("y_data is None, using candle_df_filter to get data")
+            if isinstance(x_data, pd.DataFrame):
+                lst_x_data = [x_data]
+            else:
+                lst_x_data = x_data
+            logger.validate(
+                isinstance(lst_x_data, list) or isinstance(lst_x_data, tuple),
+                "provide correct candlestick dataframe or list of candlestick dataframes",
+            )
+            extracted = zip(*[self.candle_df_filter(x) for x in lst_x_data], strict=True)
+            logger.validate(
+                extracted is not None, "Failed to extract data from candlestick dataframes"
+            )
+            time_data, open_vals, high_vals, low_vals, close_vals, _ = extracted
+        else:
+            if not incremental:
+                x_data = ensure_2d_array(x_data, with_str)
+                y_data = ensure_2d_array(y_data, with_str)
+                z_data = ensure_2d_array(z_data, with_str)
+            else:
+                x_data = ensure_list(x_data)
+                y_data = ensure_list(y_data)
+                z_data = ensure_list(z_data)
+
+        # dim_tolift = [0, 0, 0]
         row = ensure_list(row, target_type=int)
         col = ensure_list(col, target_type=int)
         lineno = ensure_list(lineno, target_type=int)
-        if not incremental:
-            x_data = ensure_2d_array(x_data, with_str)
-            y_data = ensure_2d_array(y_data, with_str)
-            z_data = ensure_2d_array(z_data, with_str)
-        else:
-            x_data = ensure_list(x_data)
-            y_data = ensure_list(y_data)
-            z_data = ensure_list(z_data)
-
-        # dim_tolift = [0, 0, 0]
         with self.go_f.batch_update():
             idx_z = 0
             for no, (irow, icol, ilineno) in enumerate(zip(row, col, lineno, strict=False)):
                 plot_type = self.plot_types[irow][icol]
                 trace = self.live_dfs[irow][icol][ilineno]
+                if "candle" in plot_type:
+                    logger.validate(
+                        if_candle, "provide correct candle dataframe, no y_data should be provided"
+                    )
+                    trace.x = time_data[no]
+                    trace.open = open_vals[no]
+                    trace.high = high_vals[no]
+                    trace.low = low_vals[no]
+                    trace.close = close_vals[no]
                 if plot_type == "scatter":
+                    logger.validate(
+                        not if_candle, "provide correct scatter data, y_data should be provided"
+                    )
                     if incremental:
                         trace.x = (
                             np.append(trace.x, x_data[no])[-max_points:]
@@ -988,6 +1062,10 @@ class DataManipulator:
                         trace.x = x_data[no]
                         trace.y = y_data[no]
                 if plot_type == "contour" or plot_type == "heatmap":
+                    logger.validate(
+                        not if_candle,
+                        "provide correct contour/heatmap data, y_data should be provided",
+                    )
                     if not incremental:
                         trace.x = x_data[no]
                         trace.y = y_data[no]
@@ -1003,6 +1081,74 @@ class DataManipulator:
         if not is_notebook() and not incremental:
             self.go_f.update_layout(uirevision=True)
             time.sleep(0.5)
+
+    def candle_df_filter(self, candledf: pd.DataFrame) -> tuple[np.ndarray, ...] | None:
+        """
+        update the live candle data
+        This function filters out NaNs in the dataframe,
+        in most cases, it just works like a direct separation of columns
+        """
+        if candledf is None or candledf.empty:
+            logger.warning("Empty candlestick dataframe provided; skipping update")
+            return None
+
+        # Normalize columns to lower-case for flexible matching
+        df = candledf.copy()
+        df.columns = [str(c).strip().lower() for c in df.columns]
+
+        required_cols = ["time", "open", "high", "low", "close"]
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            logger.error("Missing required columns for candlestick: %s", ", ".join(missing))
+            return None
+
+        # Keep optional volume/amount if present (ignored for now)
+        if "amount" in df.columns:
+            required_cols.append("amount")
+        if "volume" in df.columns:
+            required_cols.append("volume")
+
+        # Drop rows with NaN in essential columns to avoid plotly errors
+        df = df.dropna(subset=required_cols)
+        if df.empty:
+            logger.warning("All rows invalid after dropping NaNs; skipping update")
+            return None
+
+        # Prepare series (do not coerce time; allow datetime or string)
+        amount_vals = np.array([])
+        volume_vals = np.array([])
+        x_vals = df["time"]
+        open_vals = pd.to_numeric(df["open"], errors="coerce").to_numpy()
+        high_vals = pd.to_numeric(df["high"], errors="coerce").to_numpy()
+        low_vals = pd.to_numeric(df["low"], errors="coerce").to_numpy()
+        close_vals = pd.to_numeric(df["close"], errors="coerce").to_numpy()
+        if "amount" in df.columns:
+            amount_vals = pd.to_numeric(df["amount"], errors="coerce").to_numpy()
+        if "volume" in df.columns:
+            volume_vals = pd.to_numeric(df["volume"], errors="coerce").to_numpy()
+
+        # Filter out any rows that became NaN during numeric conversion
+        valid_mask = (
+            ~np.isnan(open_vals)
+            & ~np.isnan(high_vals)
+            & ~np.isnan(low_vals)
+            & ~np.isnan(close_vals)
+        )
+        if not np.all(valid_mask):
+            x_vals = x_vals[valid_mask]
+            open_vals = open_vals[valid_mask]
+            high_vals = high_vals[valid_mask]
+            low_vals = low_vals[valid_mask]
+            close_vals = close_vals[valid_mask]
+
+        if "volume" in df.columns:
+            valid_mask &= ~np.isnan(volume_vals)
+            volume_vals = volume_vals[valid_mask]
+        if "amount" in df.columns:
+            valid_mask &= ~np.isnan(amount_vals)
+            volume_vals = amount_vals[valid_mask]
+
+        return x_vals, open_vals, high_vals, low_vals, close_vals, volume_vals
 
     ##########################
     # color selection method #
