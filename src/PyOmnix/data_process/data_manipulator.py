@@ -608,16 +608,18 @@ class DataManipulator:
         *,
         titles: Sequence[Sequence[str]] | None = None,
         no_layout: bool = False,
+        **kwargs,
     ) -> go.FigureWidget:
         """
         create a plotly figure for subsequent updates,
         this is a more fundamental function than the live_plot_init,
         for advanced users who want to customize the figure more
+        more kwargs can be passed to the make_subplots function
         """
         if titles is None:
             titles = [["" for _ in range(n_cols)] for _ in range(n_rows)]
         flat_titles = [item for sublist in titles for item in sublist]
-        fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=flat_titles)
+        fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=flat_titles, **kwargs)
         fig = go.FigureWidget(fig)
         if not no_layout:
             DataManipulator.update_layout(fig)
