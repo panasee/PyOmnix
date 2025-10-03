@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """This module is responsible for processing and plotting the data"""
 
+import webbrowser
 import importlib
 import json
 import logging
@@ -14,6 +15,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Literal
 
+from dash import Dash, dcc, html
+from dash.dependencies import Input, Output
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -55,6 +58,7 @@ class DataManipulator:
         plot_params: tuple[int] | int | None = None,
         usetex: bool = False,
         usepgf: bool = False,
+        data_fill_value=None,
     ) -> None:
         """
         Initialize the DataManipulator and load the settings for matplotlib saved in another file
@@ -67,7 +71,7 @@ class DataManipulator:
         """
         self.load_settings(usetex, usepgf)
         # data manipulating
-        self.datas = ObjectArray(*dims)
+        self.datas = ObjectArray(*dims, fill_value=data_fill_value)
         self.labels = ObjectArray(*dims)
         # static plotting
         self.plot_types: list[list[str]] = []
@@ -86,7 +90,7 @@ class DataManipulator:
         self.params = PlotParam(*plot_params)
         # dynamic plotting
         self.live_dfs: list[list[list[go.Scatter]]] = []
-        self.go_f: go.FigureWidget | None = None
+        self.go_f: go.FigureWidget | go.Figure | None = None
         self._stop_event = threading.Event()
         self._thread = None
         self._dash_app = None
@@ -419,7 +423,13 @@ class DataManipulator:
             y_grid = np.outer(np.sin(u_grid), np.sin(v_grid))
             z_grid = np.outer(np.ones(np.size(u_grid)), np.cos(v_grid))
             ax.plot_surface(
-                x_grid, y_grid, z_grid, color="blue", alpha=sphere_alpha, rstride=1, cstride=1
+                x_grid,
+                y_grid,
+                z_grid,
+                color="blue",
+                alpha=sphere_alpha,
+                rstride=1,
+                cstride=1,
             )
 
         if plot_type == "surface":
@@ -466,11 +476,24 @@ class DataManipulator:
         elif plot_type == "scatter":
             if color_lst is None:
                 scatter = ax.scatter(
-                    x_data, y_data, z_data, c=z_data, cmap=cmap, alpha=alpha, s=5, edgecolors="none"
+                    x_data,
+                    y_data,
+                    z_data,
+                    c=z_data,
+                    cmap=cmap,
+                    alpha=alpha,
+                    s=5,
+                    edgecolors="none",
                 )
             else:
                 scatter = ax.scatter(
-                    x_data, y_data, z_data, c=color_lst, alpha=alpha, s=5, edgecolors="none"
+                    x_data,
+                    y_data,
+                    z_data,
+                    c=color_lst,
+                    alpha=alpha,
+                    s=5,
+                    edgecolors="none",
                 )
             if colorbar:
                 fig.colorbar(
@@ -609,7 +632,7 @@ class DataManipulator:
         titles: Sequence[Sequence[str]] | None = None,
         no_layout: bool = False,
         **kwargs,
-    ) -> go.FigureWidget:
+    ) -> go.Figure:
         """
         create a plotly figure for subsequent updates,
         this is a more fundamental function than the live_plot_init,
@@ -619,8 +642,10 @@ class DataManipulator:
         if titles is None:
             titles = [["" for _ in range(n_cols)] for _ in range(n_rows)]
         flat_titles = [item for sublist in titles for item in sublist]
-        fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=flat_titles, **kwargs)
-        fig = go.FigureWidget(fig)
+        fig = make_subplots(
+            rows=n_rows, cols=n_cols, subplot_titles=flat_titles, **kwargs
+        )
+        # fig = go.FigureWidget(fig)
         if not no_layout:
             DataManipulator.update_layout(fig)
         fig.update_layout(
@@ -630,7 +655,7 @@ class DataManipulator:
         return fig
 
     @staticmethod
-    def update_layout(fig: go.Figure | go.FigureWidget) -> None:
+    def update_layout(fig: go.Figure) -> None:
         """
         update the layout of the figure
         """
@@ -654,9 +679,7 @@ class DataManipulator:
             spikemode="toaxis+across+marker",
             spikedash="dot",
             spikethickness=0.9,
-            rangebreaks=[
-                dict(bounds=["sat", "mon"]),
-            ],
+            rangeslider=dict(visible=False),
         )
         fig.update_yaxes(
             tickfont=dict(color="black", size=12),
@@ -676,6 +699,78 @@ class DataManipulator:
             spikethickness=0.9,
         )
 
+    def create_dash(self, fig: go.Figure, *, port: int = 11235, browser_open: bool = False) -> None:
+        """
+        update the figure for dash
+        """
+        if not self._dash_app:
+            app = Dash(f"live_plot_{port}")
+            self._dash_app = app
+        self._dash_app.layout = html.Div(
+            [
+                dcc.Graph(id="live-graph", figure=fig),
+                dcc.Interval(id="interval-component", interval=500, n_intervals=0),
+            ]
+        )
+
+        @self._dash_app.callback(
+            Output("live-graph", "figure"),
+            Input("interval-component", "n_intervals"),
+            Input("live-graph", "relayoutData"),
+            prevent_initial_call=True,
+        )
+        def update_graph(_, relayout_data):
+            fig_to_return = go.Figure(fig)
+            if relayout_data:
+                layout_update = {}
+                for key, value in relayout_data.items():
+                    if (key.startswith("x") or key.startswith("y")) and ".range" in key:
+                        axis_name = key.split(".")[0]
+                        if axis_name not in layout_update:
+                            layout_update[axis_name] = {"range": [None, None]}
+                        if key.endswith(".range") and ("[" not in key):
+                            layout_update[axis_name]["range"] = value
+                        elif ".range" in key and "[" in key:
+                            idx = 0 if "[0]" in key else 1
+                            layout_update[axis_name]["range"][idx] = value
+                        layout_update[axis_name].update({"autorange": False})
+                    elif (key.startswith("x") or key.startswith("y")) and key.endswith(
+                        ".autorange"
+                    ):
+                        axis_name = key.split(".")[0]
+                        if axis_name not in layout_update:
+                            layout_update[axis_name] = {"autorange": False}
+                        layout_update[axis_name].update({"autorange": value})
+
+                if layout_update:
+                    fig_to_return.update_layout(**layout_update)
+            return fig_to_return
+
+        # def update_graph(_, relayout_data):
+        #    if relayout_data:
+        #        fig.update_layout(relayout_data)
+        #    return self.go_f
+
+        # Run Dash server in a separate thread
+        def run_dash():
+            logger.info("\nStarting real-time plot server...")
+            logger.info("View the plot at: http://localhost:11235")
+            # Run the server
+            # Use the already created server instance instead of calling run directly
+            self._dash_server = create_server(
+                self._dash_app.server, host="localhost", port=port, threads=2
+            )
+            self._dash_server.run()
+
+        if browser_open:
+            webbrowser.open(f"http://localhost:{port}")
+
+        if not self._dash_thread:
+            self._dash_thread = threading.Thread(target=run_dash, daemon=True)
+            self._dash_thread.start()
+            # Give the server a moment to start
+            time.sleep(1)
+
     def live_plot_init(
         self,
         n_rows: int,
@@ -687,7 +782,8 @@ class DataManipulator:
         titles: Sequence[Sequence[str]] | None = None,
         axes_labels: Sequence[Sequence[Sequence[str]]] | None = None,
         line_labels: Sequence[Sequence[Sequence[str]]] | None = None,
-        plot_types: Sequence[Sequence[Literal["scatter", "contour", "heatmap"]]] | None = None,
+        plot_types: Sequence[Sequence[Literal["scatter", "contour", "heatmap"]]]
+        | None = None,
         browser_open: bool = False,
         inline_jupyter: bool = True,
     ) -> None:
@@ -712,17 +808,23 @@ class DataManipulator:
         self.plot_types = plot_types
         # for contour plot, only one "line" is allowed
         traces_per_subplot = [
-            [lines_per_fig if plot_types[i][j] == "scatter" else 1 for j in range(n_cols)]
+            [
+                lines_per_fig if plot_types[i][j] == "scatter" else 1
+                for j in range(n_cols)
+            ]
             for i in range(n_rows)
         ]
         if titles is None:
             titles = [["" for _ in range(n_cols)] for _ in range(n_rows)]
         flat_titles = [item for sublist in titles for item in sublist]
         if axes_labels is None:
-            axes_labels = [[["" for _ in range(2)] for _ in range(n_cols)] for _ in range(n_rows)]
+            axes_labels = [
+                [["" for _ in range(2)] for _ in range(n_cols)] for _ in range(n_rows)
+            ]
         if line_labels is None:
             line_labels = [
-                [["" for _ in range(lines_per_fig)] for _ in range(n_cols)] for _ in range(n_rows)
+                [["" for _ in range(lines_per_fig)] for _ in range(n_cols)]
+                for _ in range(n_rows)
             ]
 
         # initial all the data arrays, not needed for just empty lists
@@ -756,7 +858,7 @@ class DataManipulator:
                                 y=[],
                                 mode="lines+markers",
                                 name=line_labels[i][j][k],
-                                line=dict(width=1, color="#a47764"),
+                                line=dict(width=1),
                             ),
                             row=i + 1,
                             col=j + 1,
@@ -771,7 +873,9 @@ class DataManipulator:
                     data_idx += 1
                 elif plot_type == "heatmap":
                     fig.add_trace(
-                        go.Heatmap(z=[], x=[], y=[], name=line_labels[i][j][0], zsmooth="best"),
+                        go.Heatmap(
+                            z=[], x=[], y=[], name=line_labels[i][j][0], zsmooth="best"
+                        ),
                         row=i + 1,
                         col=j + 1,
                     )
@@ -798,7 +902,9 @@ class DataManipulator:
                     )
                     data_idx += 1
                 else:
-                    raise ValueError(f"Unsupported plot type '{plot_type}' at subplot ({i},{j})")
+                    raise ValueError(
+                        f"Unsupported plot type '{plot_type}' at subplot ({i},{j})"
+                    )
                 fig.update_xaxes(title_text=axes_labels[i][j][0], row=i + 1, col=j + 1)
                 fig.update_yaxes(title_text=axes_labels[i][j][1], row=i + 1, col=j + 1)
 
@@ -816,79 +922,82 @@ class DataManipulator:
             display(self.go_f)
 
         else:
-            import webbrowser
-
-            from dash import Dash, dcc, html
-            from dash.dependencies import Input, Output
-
-            if inline_jupyter:
-                logger.debug("inline_jupyter is not supported in non-notebook environment")
-            if not self._dash_app:
-                app = Dash("live_plot_11235")
-                self._dash_app = app
-
             self.go_f = fig
             update_to_live_dfs()
-            self._dash_app.layout = html.Div(
-                [
-                    dcc.Graph(id="live-graph", figure=self.go_f),
-                    dcc.Interval(id="interval-component", interval=500, n_intervals=0),
-                ]
-            )
 
-            @self._dash_app.callback(
-                Output("live-graph", "figure"),
-                Input("interval-component", "n_intervals"),
-                Input("live-graph", "relayoutData"),
-                prevent_initial_call=True,
-            )
-            def update_graph(_, relayout_data):
-                fig_to_return = go.Figure(self.go_f)
-                if relayout_data:
-                    layout_update = {}
-                    for key, value in relayout_data.items():
-                        if (key.startswith("x") or key.startswith("y")) and ".range" in key:
-                            axis_name = key.split(".")[0]
-                            if axis_name not in layout_update:
-                                layout_update[axis_name] = {"range": [None, None]}
-                            idx = 0 if "[0]" in key else 1
-                            layout_update[axis_name]["range"][idx] = value
-                        elif (key.startswith("x") or key.startswith("y")) and key.endswith(
-                            ".autorange"
-                        ):
-                            axis_name = key.split(".")[0]
-                            layout_update[axis_name] = {"autorange": True}
-
-                    if layout_update:
-                        fig_to_return.update_layout(**layout_update)
-                return fig_to_return
-
-            # def update_graph(_, relayout_data):
-            #    if relayout_data:
-            #        self.go_f.update_layout(relayout_data)
-            #    return self.go_f
-
-            # Run Dash server in a separate thread
-            def run_dash():
-                logger.info("\nStarting real-time plot server...")
-                logger.info("View the plot at: http://localhost:11235")
-                # Run the server
-                # Use the already created server instance instead of calling run directly
-                self._dash_server = create_server(
-                    self._dash_app.server, host="localhost", port=11235, threads=2
+            if inline_jupyter:
+                logger.debug(
+                    "inline_jupyter is not supported in non-notebook environment"
                 )
-                self._dash_server.run()
+            self.create_dash(self.go_f, port=11235, browser_open=browser_open)
+            #if not self._dash_app:
+            #    app = Dash("live_plot_11235")
+            #    self._dash_app = app
 
-            if browser_open:
-                webbrowser.open("http://localhost:11235")
+            #self._dash_app.layout = html.Div(
+            #    [
+            #        dcc.Graph(id="live-graph", figure=self.go_f),
+            #        dcc.Interval(id="interval-component", interval=500, n_intervals=0),
+            #    ]
+            #)
 
-            if not self._dash_thread:
-                self._dash_thread = threading.Thread(target=run_dash, daemon=True)
-                self._dash_thread.start()
-                # Give the server a moment to start
-                time.sleep(1)
+            #@self._dash_app.callback(
+            #    Output("live-graph", "figure"),
+            #    Input("interval-component", "n_intervals"),
+            #    Input("live-graph", "relayoutData"),
+            #    prevent_initial_call=True,
+            #)
+            #def update_graph(_, relayout_data):
+            #    fig_to_return = go.Figure(self.go_f)
+            #    if relayout_data:
+            #        layout_update = {}
+            #        for key, value in relayout_data.items():
+            #            if (
+            #                key.startswith("x") or key.startswith("y")
+            #            ) and ".range" in key:
+            #                axis_name = key.split(".")[0]
+            #                if axis_name not in layout_update:
+            #                    layout_update[axis_name] = {"range": [None, None]}
+            #                idx = 0 if "[0]" in key else 1
+            #                layout_update[axis_name]["range"][idx] = value
+            #            elif (
+            #                key.startswith("x") or key.startswith("y")
+            #            ) and key.endswith(".autorange"):
+            #                axis_name = key.split(".")[0]
+            #                layout_update[axis_name] = {"autorange": True}
 
-    def save_fig_periodically(self, plot_path: Path | str, time_interval: int = 60) -> None:
+            #        if layout_update:
+            #            fig_to_return.update_layout(**layout_update)
+            #    return fig_to_return
+
+            ## def update_graph(_, relayout_data):
+            ##    if relayout_data:
+            ##        self.go_f.update_layout(relayout_data)
+            ##    return self.go_f
+
+            ## Run Dash server in a separate thread
+            #def run_dash():
+            #    logger.info("\nStarting real-time plot server...")
+            #    logger.info("View the plot at: http://localhost:11235")
+            #    # Run the server
+            #    # Use the already created server instance instead of calling run directly
+            #    self._dash_server = create_server(
+            #        self._dash_app.server, host="localhost", port=11235, threads=2
+            #    )
+            #    self._dash_server.run()
+
+            #if browser_open:
+            #    webbrowser.open("http://localhost:11235")
+
+            #if not self._dash_thread:
+            #    self._dash_thread = threading.Thread(target=run_dash, daemon=True)
+            #    self._dash_thread.start()
+            #    # Give the server a moment to start
+            #    time.sleep(1)
+
+    def save_fig_periodically(
+        self, plot_path: Path | str, time_interval: int = 60
+    ) -> None:
         """
         save the figure periodically
         this function will be running consistently in the background
@@ -912,7 +1021,9 @@ class DataManipulator:
                         )
                         time.sleep(retry_delay)
                     else:
-                        logger.error(f"Failed to save image after {max_retries} attempts: {e!s}")
+                        logger.error(
+                            f"Failed to save image after {max_retries} attempts: {e!s}"
+                        )
 
     def start_saving(self, plot_path: Path | str, time_interval: int = 60) -> None:
         """
@@ -938,7 +1049,9 @@ class DataManipulator:
         row: int | tuple[int],
         col: int | tuple[int],
         lineno: int | tuple[int],
-        x_data: Sequence[float | str] | Sequence[Sequence[float | str]] | np.ndarray[float | str],
+        x_data: Sequence[float | str]
+        | Sequence[Sequence[float | str]]
+        | np.ndarray[float | str],
         y_data: Sequence[float | str]
         | Sequence[Sequence[float | str]]
         | np.ndarray[float | str]
@@ -1012,9 +1125,12 @@ class DataManipulator:
                 isinstance(lst_x_data, list) or isinstance(lst_x_data, tuple),
                 "provide correct candlestick dataframe or list of candlestick dataframes",
             )
-            extracted = zip(*[self.candle_df_filter(x) for x in lst_x_data], strict=True)
+            extracted = zip(
+                *[self.candle_df_filter(x) for x in lst_x_data], strict=True
+            )
             logger.validate(
-                extracted is not None, "Failed to extract data from candlestick dataframes"
+                extracted is not None,
+                "Failed to extract data from candlestick dataframes",
             )
             time_data, open_vals, high_vals, low_vals, close_vals, _ = extracted
         else:
@@ -1033,12 +1149,15 @@ class DataManipulator:
         lineno = ensure_list(lineno, target_type=int)
         with self.go_f.batch_update():
             idx_z = 0
-            for no, (irow, icol, ilineno) in enumerate(zip(row, col, lineno, strict=False)):
+            for no, (irow, icol, ilineno) in enumerate(
+                zip(row, col, lineno, strict=False)
+            ):
                 plot_type = self.plot_types[irow][icol]
                 trace = self.live_dfs[irow][icol][ilineno]
                 if "candle" in plot_type:
                     logger.validate(
-                        if_candle, "provide correct candle dataframe, no y_data should be provided"
+                        if_candle,
+                        "provide correct candle dataframe, no y_data should be provided",
                     )
                     trace.x = time_data[no]
                     trace.open = open_vals[no]
@@ -1047,7 +1166,8 @@ class DataManipulator:
                     trace.close = close_vals[no]
                 if plot_type == "scatter":
                     logger.validate(
-                        not if_candle, "provide correct scatter data, y_data should be provided"
+                        not if_candle,
+                        "provide correct scatter data, y_data should be provided",
                     )
                     if incremental:
                         trace.x = (
@@ -1101,7 +1221,9 @@ class DataManipulator:
         required_cols = ["time", "open", "high", "low", "close"]
         missing = [c for c in required_cols if c not in df.columns]
         if missing:
-            logger.error("Missing required columns for candlestick: %s", ", ".join(missing))
+            logger.error(
+                "Missing required columns for candlestick: %s", ", ".join(missing)
+            )
             return None
 
         # Keep optional volume/amount if present (ignored for now)
@@ -1181,7 +1303,9 @@ class DataManipulator:
         if external_file is None:
             localenv_filter = re.compile(r"^PYLAB_DB_LOCAL")
             filtered_vars = {
-                key: value for key, value in os.environ.items() if localenv_filter.match(key)
+                key: value
+                for key, value in os.environ.items()
+                if localenv_filter.match(key)
             }
             used_var = list(filtered_vars.keys())[0]
             if filtered_vars:
@@ -1254,8 +1378,12 @@ class DataManipulator:
             def init_ui(self):
                 self.verticalHeader().setVisible(False)
                 self.horizontalHeader().setVisible(False)
-                self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-                self.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+                self.horizontalHeader().setSectionResizeMode(
+                    QHeaderView.ResizeMode.Stretch
+                )
+                self.verticalHeader().setSectionResizeMode(
+                    QHeaderView.ResizeMode.Stretch
+                )
 
                 for r in range(len(self.rgb_mat)):
                     for c in range(48):
