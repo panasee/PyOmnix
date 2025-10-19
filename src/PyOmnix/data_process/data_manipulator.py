@@ -2,6 +2,7 @@
 """This module is responsible for processing and plotting the data"""
 
 import webbrowser
+import socket
 import importlib
 import json
 import logging
@@ -96,6 +97,32 @@ class DataManipulator:
         self._dash_app = None
         self._dash_thread = None
         self._dash_server = None
+        self._dash_port: int | None = None
+        self._dash_host: str = "127.0.0.1"
+
+    def get_dash_port(self) -> int | None:
+        return self._dash_port
+
+    def get_dash_url(self) -> str | None:
+        return (
+            f"http://{self._dash_host}:{self._dash_port}"
+            if self._dash_port is not None
+            else None
+        )
+
+    @staticmethod
+    def _find_free_port(preferred: int | None = 11235) -> int:
+        if preferred is not None:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    s.bind(("127.0.0.1", preferred))
+                    return preferred
+                except OSError:
+                    pass
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            return int(s.getsockname()[1])
 
     #####################
     # data manipulating #
@@ -717,7 +744,7 @@ class DataManipulator:
             Output("live-graph", "figure"),
             Input("interval-component", "n_intervals"),
             Input("live-graph", "relayoutData"),
-            prevent_initial_call=True,
+            prevent_initial_call=False,
         )
         def update_graph(_, relayout_data):
             fig_to_return = go.Figure(fig)
@@ -754,22 +781,56 @@ class DataManipulator:
         # Run Dash server in a separate thread
         def run_dash():
             logger.info("\nStarting real-time plot server...")
-            logger.info("View the plot at: http://localhost:11235")
-            # Run the server
-            # Use the already created server instance instead of calling run directly
+            selected_port = DataManipulator._find_free_port(port)
+            self._dash_port = selected_port
+            logger.info(f"View the plot at: http://{self._dash_host}:{selected_port}")
             self._dash_server = create_server(
-                self._dash_app.server, host="localhost", port=port, threads=2
+                self._dash_app.server, host=self._dash_host, port=selected_port, threads=4
             )
             self._dash_server.run()
 
         if browser_open:
-            webbrowser.open(f"http://localhost:{port}")
+            url = (
+                f"http://{self._dash_host}:{self._dash_port}"
+                if self._dash_port is not None
+                else f"http://{self._dash_host}:{port}"
+            )
+            webbrowser.open(url)
 
         if not self._dash_thread:
             self._dash_thread = threading.Thread(target=run_dash, daemon=True)
             self._dash_thread.start()
             # Give the server a moment to start
             time.sleep(1)
+
+    def stop_dash(self, *, timeout: float = 2.0) -> None:
+        """Gracefully stop the background Dash/Waitress server and thread."""
+        try:
+            if self._dash_server is not None:
+                # Best-effort shutdown across waitress versions
+                try:
+                    # Stop accepting new connections
+                    if hasattr(self._dash_server, "close"):
+                        self._dash_server.close()
+                except Exception:
+                    pass
+                try:
+                    # Ask task dispatcher to shutdown if available
+                    dispatcher = getattr(self._dash_server, "task_dispatcher", None)
+                    if dispatcher is not None and hasattr(dispatcher, "shutdown"):
+                        dispatcher.shutdown()
+                except Exception:
+                    pass
+        finally:
+            if self._dash_thread is not None and self._dash_thread.is_alive():
+                try:
+                    self._dash_thread.join(timeout=timeout)
+                except Exception:
+                    pass
+            self._dash_thread = None
+            self._dash_server = None
+            self._dash_app = None
+            self._dash_port = None
 
     def live_plot_init(
         self,

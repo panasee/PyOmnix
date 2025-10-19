@@ -333,8 +333,9 @@ class EasyDataWindow(QMainWindow):
             browser_open=False,
             inline_jupyter=False,
         )
-        # Load the Dash page into the view
-        self.plot_widget.load_dash("http://localhost:11235")
+        # Load the Dash page into the view (respect dynamically selected port)
+        url = self.dm.get_dash_url() or "http://127.0.0.1:11235"
+        self.plot_widget.load_dash(url)
 
         # Connections
         self.btn_new_folder.clicked.connect(self.create_folder)
@@ -350,6 +351,14 @@ class EasyDataWindow(QMainWindow):
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
 
         self._log("Initialized PyQt GUI")
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # type: ignore[override]
+        try:
+            if getattr(self, "dm", None) is not None:
+                self.dm.stop_dash()
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     # ------------------------------- UI helpers -------------------------------
     def _log(self, msg: str, log_type: str = "info") -> None:
