@@ -2,8 +2,10 @@
 
 This GUI ports the main ideas from the previous tkinter prototype into a
 PyQt-based application, while keeping logic layered and testable. Heavy data
-manipulation is delegated to small utilities (e.g., DataSplitter), and the
-plotting uses Matplotlib on the QtAgg backend.
+manipulation is delegated to small utilities (e.g., DataSplitter). Plotting is
+now driven by Plotly (served via Dash) using a WebGL backend for high-volume
+data; users obtain a Figure via create_plotly_figure and then traces are added
+and updated directly.
 
 Focus in this iteration:
 - File/Folder manager in a tree view (in-memory project)
@@ -26,7 +28,6 @@ from pathlib import Path
 import matplotlib
 import pandas as pd
 from PyQt6 import QtCore, QtGui, QtWidgets
-from PyQt6.QtCore import Qt, QUrl  # type: ignore[attr-defined]
 from PyQt6.QtWidgets import (  # type: ignore[attr-defined]
     QApplication,
     QComboBox,
@@ -55,6 +56,8 @@ except Exception:  # pragma: no cover
     QWebEngineView = None  # type: ignore[assignment]
 
 matplotlib.use("QtAgg")
+
+from typing import cast
 
 import plotly.graph_objects as go
 from matplotlib.backends.backend_qt import NavigationToolbar2QT
@@ -197,7 +200,7 @@ class PlotlyDashWidget(QWidget):
         layout.addWidget(self.view)
 
     def load_dash(self, url: str = "http://localhost:11235") -> None:
-        self.view.setUrl(QUrl(url))
+        self.view.setUrl(QtCore.QUrl(url))
 
 
 class SplitDialog(QDialog):
@@ -260,7 +263,7 @@ class EasyDataWindow(QMainWindow):
         central = QWidget(self)
         self.setCentralWidget(central)
 
-        hsplit = QSplitter(Qt.Orientation.Horizontal, central)
+        hsplit = QSplitter(QtCore.Qt.Orientation.Horizontal, central)
         left_panel = QWidget(hsplit)
         right_panel = QWidget(hsplit)
         hsplit.addWidget(left_panel)
@@ -315,27 +318,23 @@ class EasyDataWindow(QMainWindow):
 
         # Right: plot widget
         right_layout = QVBoxLayout(right_panel)
-        # Switch from Matplotlib to Plotly Dash embed
+        # Switch to Plotly Dash embed
         self.plot_widget = PlotlyDashWidget(right_panel)
         right_layout.addWidget(self.plot_widget, 1)
-        # Initialize DataManipulator/Dash
-        self.dm = DataManipulator(1)
-        # Start a simple 1x1 figure in Dash without opening browser
-        self.dm.live_plot_init(
+        self.fig = DataManipulator.create_plotly_figure(
             1,
             1,
-            lines_per_fig=5,
             pixel_height=700,
             pixel_width=900,
-            titles=[[""]],
-            axes_labels=[[["", ""]]],
-            plot_types=[["scatter"]],
-            browser_open=False,
-            inline_jupyter=False,
         )
-        # Load the Dash page into the view (respect dynamically selected port)
-        url = self.dm.get_dash_url() or "http://127.0.0.1:11235"
-        self.plot_widget.load_dash(url)
+
+        # Create DataManipulator and Dash app for the figure, then load in web view
+        self.dm = DataManipulator(1)
+        # Start Dash on background thread (will choose a free port starting from 11235)
+        self.dm.create_dash(self.fig, port=11235, browser_open=False)
+        # Poll until port is known, then load the URL into the web view
+        self._dash_load_attempts = 0
+        self._schedule_dash_load()
 
         # Connections
         self.btn_new_folder.clicked.connect(self.create_folder)
@@ -347,7 +346,7 @@ class EasyDataWindow(QMainWindow):
         self.tree.itemSelectionChanged.connect(self.on_selection_changed)
         self.combo_x.currentIndexChanged.connect(self.plot_data)
         self.combo_y.currentIndexChanged.connect(self.plot_data)
-        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
 
         self._log("Initialized PyQt GUI")
@@ -486,7 +485,9 @@ class EasyDataWindow(QMainWindow):
         menu = QMenu(self)
         act_rename = menu.addAction("Rename")
         act_delete = menu.addAction("Delete")
-        act = menu.exec(self.tree.viewport().mapToGlobal(pos))
+        viewport = self.tree.viewport()
+        pos_global = viewport.mapToGlobal(pos) if viewport is not None else QtGui.QCursor.pos()
+        act = menu.exec(pos_global)
         if act is act_rename and item:
             self._rename_item(item)
         elif act is act_delete and item:
@@ -550,10 +551,18 @@ class EasyDataWindow(QMainWindow):
     def plot_data(self) -> None:
         items = self._selected_items()
         if not items:
-            # clear plot: set empty data on first trace if exists
-            if getattr(self, "dm", None) and getattr(self.dm, "go_f", None):
-                if len(self.dm.go_f.data) > 0:
-                    self.dm.live_plot_update(0, 0, 0, [], [])
+            # Clear plot: empty all existing traces on the current figure
+            if getattr(self, "fig", None) is not None:
+                try:
+                    fig = cast(go.Figure, self.fig)
+                    if len(fig.data) > 0:
+                        for tr in fig.data:
+                            # Only scatter-like traces are managed here
+                            if hasattr(tr, "x") and hasattr(tr, "y"):
+                                tr.x = []
+                                tr.y = []
+                except Exception:
+                    pass
             return
         x_col = self.combo_x.currentText()
         y_col = self.combo_y.currentText()
@@ -567,7 +576,7 @@ class EasyDataWindow(QMainWindow):
                 files.extend(self.project.get_files_recursive(name))
         files = list(dict.fromkeys(files))  # stable unique
 
-        # Prepare data and update Plotly live traces
+        # Prepare data and update Plotly traces on the figure directly
         valid = []
         for idx, fname in enumerate(files):
             df = self.project.get_current_data(fname)
@@ -575,61 +584,56 @@ class EasyDataWindow(QMainWindow):
                 continue
             valid.append((idx, fname, df[x_col], df[y_col]))
 
-        if valid and getattr(self.dm, "go_f", None):
+        if valid and getattr(self, "fig", None) is not None:
             # update axis labels and ensure enough traces
+            fig = cast(go.Figure, self.fig)
             try:
-                # narrow type hint for linters in dynamic environment
-                fig: any = self.dm.go_f  # type: ignore[assignment]
                 fig.update_xaxes(title_text=x_col, row=1, col=1)
                 fig.update_yaxes(title_text=y_col, row=1, col=1)
                 existing = len(fig.data)
                 needed = len(valid)
                 for _ in range(max(0, needed - existing)):
-                    fig.add_trace(go.Scatter(x=[], y=[], mode="lines+markers"), row=1, col=1)
-                # set names and adjust trace type based on point count
-                threshold_pts = 5000
-                for i, (_, fname, x_s, y_s) in enumerate(valid):
-                    # set name consistently
-                    fig.data[i].name = fname
-                    # decide desired trace type by current dataset size
+                    # Always use WebGL scatter for performance
+                    fig.add_trace(
+                        go.Scattergl(x=[], y=[], mode="lines+markers"), row=1, col=1
+                    )
+                # set names
+                for i, (_, fname, _, _) in enumerate(valid):
                     try:
-                        npts = int(len(x_s))
+                        cast(go.Scattergl, fig.data[i]).name = fname
                     except Exception:
-                        npts = 0
-                    desired = "scattergl" if npts > threshold_pts else "scatter"
-                    current = getattr(fig.data[i], "type", "")
-                    if current != desired:
-                        # preserve display params compatible to both types
-                        mode = getattr(fig.data[i], "mode", "lines+markers")
-                        lw = 1
-                        try:
-                            lw = int(getattr(getattr(fig.data[i], "line", None), "width", 1))
-                        except Exception:
-                            lw = 1
-                        new_trace = (
-                            go.Scattergl(x=[], y=[], mode=mode, name=fname, line=dict(width=lw))
-                            if desired == "scattergl"
-                            else go.Scatter(x=[], y=[], mode=mode, name=fname, line=dict(width=lw))
-                        )
-                        data_list = list(fig.data)
-                        data_list[i] = new_trace
-                        fig.data = tuple(data_list)
+                        pass
             except Exception:
                 pass
 
-            # Push data directly to traces to avoid extra indirection and allow type swap
+            # Push data directly to traces
             for i, (_, _, x_series, y_series) in enumerate(valid):
                 try:
-                    # Convert Series to numpy arrays for performance
                     x_vals = getattr(x_series, "to_numpy", lambda: x_series)()
                     y_vals = getattr(y_series, "to_numpy", lambda: y_series)()
-                    fig.data[i].x = x_vals
-                    fig.data[i].y = y_vals
+                    tr = cast(go.Scattergl, fig.data[i])
+                    tr.x = x_vals
+                    tr.y = y_vals
                 except Exception:
-                    # Fallback to the original update method if direct assignment fails
-                    self.dm.live_plot_update(0, 0, i, x_series, y_series)
+                    pass
 
         self._log(f"Plotted {len(valid)} file(s): {x_col} vs {y_col}")
+
+    # ------------------------------- Dash utils -------------------------------
+    def _schedule_dash_load(self) -> None:
+        """Poll for Dash server port and load it into the web view when ready."""
+        try:
+            port = getattr(self.dm, "_dash_port", None)
+            host = getattr(self.dm, "_dash_host", "127.0.0.1")
+            if port is not None:
+                self.plot_widget.load_dash(f"http://{host}:{port}")
+                return
+        except Exception:
+            pass
+        # Retry a few times with small delay
+        if self._dash_load_attempts < 20:
+            self._dash_load_attempts += 1
+            QtCore.QTimer.singleShot(200, self._schedule_dash_load)
 
     # --------------------------------- Split ---------------------------------
     def split_sweeps(self) -> None:

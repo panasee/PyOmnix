@@ -1,5 +1,11 @@
 #!/usr/bin/env python
-"""This module is responsible for processing and plotting the data"""
+"""
+This module is responsible for processing and plotting the data
+and creating a Plotly figure for Dash embedding.
+for plotly figure, there are two ways to create it:
+1. obj.live_plot_init() together with obj.live_plot_update() to create a live plot easily but with limited customization.
+2. obj.create_plotly_figure() --> go.Figure --> obj.create_dash() to create a figure object and then update it manually.
+"""
 
 import webbrowser
 import socket
@@ -99,6 +105,10 @@ class DataManipulator:
         self._dash_server = None
         self._dash_port: int | None = None
         self._dash_host: str = "127.0.0.1"
+        # performance tuning defaults for dynamic Plotly rendering
+        self._webgl_mode: Literal["off", "on", "auto"] = "auto"
+        self._marker_toggle_threshold: int = 20000
+        self._disable_hover_threshold: int = 10000
 
     def get_dash_port(self) -> int | None:
         return self._dash_port
@@ -838,6 +848,9 @@ class DataManipulator:
         line_labels: Sequence[Sequence[Sequence[str]]] | None = None,
         plot_types: Sequence[Sequence[Literal["scatter", "contour", "heatmap"]]]
         | None = None,
+        webgl: Literal["off", "on", "auto"] = "auto",
+        marker_toggle_threshold: int = 20000,
+        disable_hover_threshold: int = 10000,
         browser_open: bool = False,
         inline_jupyter: bool = True,
     ) -> None:
@@ -856,10 +869,18 @@ class DataManipulator:
         - plot_types: the plot types for the lines, the type of plot for each subplot,
                 options include 'scatter' and 'contour', shape should be (n_rows, n_cols)
         - browser_open: whether to open the browser automatically(only works when not in jupyter notebook)
+        - webgl: choose "on" to always use Scattergl, "off" to always use Scatter, "auto" to switch by point count
+        - auto_webgl_threshold: when webgl is "auto", switch to Scattergl if points exceed this number
+        - marker_toggle_threshold: above this point count, switch to mode="lines" (no markers)
+        - disable_hover_threshold: above this point count, set hoverinfo="skip" to reduce hover cost
         """
         if plot_types is None:
             plot_types = [["scatter" for _ in range(n_cols)] for _ in range(n_rows)]
         self.plot_types = plot_types
+        # store performance options
+        self._webgl_mode = webgl
+        self._marker_toggle_threshold = int(marker_toggle_threshold)
+        self._disable_hover_threshold = int(disable_hover_threshold)
         # for contour plot, only one "line" is allowed
         traces_per_subplot = [
             [
@@ -906,17 +927,30 @@ class DataManipulator:
                 num_traces = traces_per_subplot[i][j]
                 if plot_type == "scatter":
                     for k in range(num_traces):
-                        fig.add_trace(
-                            go.Scatter(
-                                x=[],
-                                y=[],
-                                mode="lines+markers",
-                                name=line_labels[i][j][k],
-                                line=dict(width=1),
-                            ),
-                            row=i + 1,
-                            col=j + 1,
-                        )
+                        if webgl == "on":
+                            fig.add_trace(
+                                go.Scattergl(
+                                    x=[],
+                                    y=[],
+                                    mode="lines+markers",
+                                    name=line_labels[i][j][k],
+                                    line=dict(width=1),
+                                ),
+                                row=i + 1,
+                                col=j + 1,
+                            )
+                        else:
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=[],
+                                    y=[],
+                                    mode="lines+markers",
+                                    name=line_labels[i][j][k],
+                                    line=dict(width=1),
+                                ),
+                                row=i + 1,
+                                col=j + 1,
+                            )
                         data_idx += 1
                 elif plot_type == "contour":
                     fig.add_trace(
@@ -984,70 +1018,6 @@ class DataManipulator:
                     "inline_jupyter is not supported in non-notebook environment"
                 )
             self.create_dash(self.go_f, port=11235, browser_open=browser_open)
-            #if not self._dash_app:
-            #    app = Dash("live_plot_11235")
-            #    self._dash_app = app
-
-            #self._dash_app.layout = html.Div(
-            #    [
-            #        dcc.Graph(id="live-graph", figure=self.go_f),
-            #        dcc.Interval(id="interval-component", interval=500, n_intervals=0),
-            #    ]
-            #)
-
-            #@self._dash_app.callback(
-            #    Output("live-graph", "figure"),
-            #    Input("interval-component", "n_intervals"),
-            #    Input("live-graph", "relayoutData"),
-            #    prevent_initial_call=True,
-            #)
-            #def update_graph(_, relayout_data):
-            #    fig_to_return = go.Figure(self.go_f)
-            #    if relayout_data:
-            #        layout_update = {}
-            #        for key, value in relayout_data.items():
-            #            if (
-            #                key.startswith("x") or key.startswith("y")
-            #            ) and ".range" in key:
-            #                axis_name = key.split(".")[0]
-            #                if axis_name not in layout_update:
-            #                    layout_update[axis_name] = {"range": [None, None]}
-            #                idx = 0 if "[0]" in key else 1
-            #                layout_update[axis_name]["range"][idx] = value
-            #            elif (
-            #                key.startswith("x") or key.startswith("y")
-            #            ) and key.endswith(".autorange"):
-            #                axis_name = key.split(".")[0]
-            #                layout_update[axis_name] = {"autorange": True}
-
-            #        if layout_update:
-            #            fig_to_return.update_layout(**layout_update)
-            #    return fig_to_return
-
-            ## def update_graph(_, relayout_data):
-            ##    if relayout_data:
-            ##        self.go_f.update_layout(relayout_data)
-            ##    return self.go_f
-
-            ## Run Dash server in a separate thread
-            #def run_dash():
-            #    logger.info("\nStarting real-time plot server...")
-            #    logger.info("View the plot at: http://localhost:11235")
-            #    # Run the server
-            #    # Use the already created server instance instead of calling run directly
-            #    self._dash_server = create_server(
-            #        self._dash_app.server, host="localhost", port=11235, threads=2
-            #    )
-            #    self._dash_server.run()
-
-            #if browser_open:
-            #    webbrowser.open("http://localhost:11235")
-
-            #if not self._dash_thread:
-            #    self._dash_thread = threading.Thread(target=run_dash, daemon=True)
-            #    self._dash_thread.start()
-            #    # Give the server a moment to start
-            #    time.sleep(1)
 
     def save_fig_periodically(
         self, plot_path: Path | str, time_interval: int = 60
@@ -1218,43 +1188,30 @@ class DataManipulator:
                     trace.high = high_vals[no]
                     trace.low = low_vals[no]
                     trace.close = close_vals[no]
-                if plot_type == "scatter":
+                if plot_type == "scatter" or plot_type == "scattergl":
                     logger.validate(
                         not if_candle,
                         "provide correct scatter data, y_data should be provided",
                     )
-                    # Dynamically switch trace type based on point count for performance
-                    try:
-                        num_points = len(x_data[no])
-                    except Exception:
-                        num_points = 0
-                    desired_type = "scattergl" if num_points > 5000 else "scatter"
-                    current_type = getattr(trace, "type", "")
-                    if current_type != desired_type:
-                        # Preserve compatible visual properties
-                        trace_mode = getattr(trace, "mode", "lines+markers")
-                        line_width = 1
-                        try:
-                            line_width = int(getattr(getattr(trace, "line", None), "width", 1))
-                        except Exception:
-                            line_width = 1
-                        replacement = (
-                            go.Scattergl(x=[], y=[], mode=trace_mode, name=trace.name, line=dict(width=line_width))
-                            if desired_type == "scattergl"
-                            else go.Scatter(x=[], y=[], mode=trace_mode, name=trace.name, line=dict(width=line_width))
-                        )
-                        # Replace the trace in the figure and rebind live_dfs reference
-                        data_list = list(self.go_f.data)
-                        # find flat index of current trace object
-                        try:
-                            flat_idx = next(i for i, t in enumerate(data_list) if t is trace)
-                        except StopIteration:
-                            flat_idx = None
-                        if flat_idx is not None:
-                            data_list[flat_idx] = replacement
-                            self.go_f.data = tuple(data_list)
-                            trace = self.go_f.data[flat_idx]
-                            self.live_dfs[irow][icol][ilineno] = trace
+                    # Decide desired trace type and style based on options and point count
+                    trace.x = x_data[no]
+                    trace.y = y_data[no]
+                    # Toggle markers for dense data to reduce draw calls
+                    if len(x_data[no]) > self._marker_toggle_threshold:
+                        trace.mode = "lines"
+                    else:
+                        trace.mode = "lines+markers"
+                    # Disable hover for extremely dense data to reduce hover computation
+                    if len(x_data[no]) > self._disable_hover_threshold:
+                        trace.hoverinfo = "skip"
+                        self.go_f.update_layout(hovermode=False)
+                        self.go_f.update_xaxes(showspikes=False)
+                        self.go_f.update_yaxes(showspikes=False)
+                    else:
+                        self.go_f.update_layout(hovermode="x")
+                        self.go_f.update_xaxes(showspikes=True)
+                        self.go_f.update_yaxes(showspikes=True)
+
                     if incremental:
                         trace.x = (
                             np.append(trace.x, x_data[no])[-max_points:]
