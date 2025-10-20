@@ -736,7 +736,7 @@ class DataManipulator:
         self._dash_app.layout = html.Div(
             [
                 dcc.Graph(id="live-graph", figure=fig),
-                dcc.Interval(id="interval-component", interval=500, n_intervals=0),
+                dcc.Interval(id="interval-component", interval=800, n_intervals=0),
             ]
         )
 
@@ -807,13 +807,6 @@ class DataManipulator:
         """Gracefully stop the background Dash/Waitress server and thread."""
         try:
             if self._dash_server is not None:
-                # Best-effort shutdown across waitress versions
-                try:
-                    # Stop accepting new connections
-                    if hasattr(self._dash_server, "close"):
-                        self._dash_server.close()
-                except Exception:
-                    pass
                 try:
                     # Ask task dispatcher to shutdown if available
                     dispatcher = getattr(self._dash_server, "task_dispatcher", None)
@@ -1230,6 +1223,38 @@ class DataManipulator:
                         not if_candle,
                         "provide correct scatter data, y_data should be provided",
                     )
+                    # Dynamically switch trace type based on point count for performance
+                    try:
+                        num_points = len(x_data[no])
+                    except Exception:
+                        num_points = 0
+                    desired_type = "scattergl" if num_points > 5000 else "scatter"
+                    current_type = getattr(trace, "type", "")
+                    if current_type != desired_type:
+                        # Preserve compatible visual properties
+                        trace_mode = getattr(trace, "mode", "lines+markers")
+                        line_width = 1
+                        try:
+                            line_width = int(getattr(getattr(trace, "line", None), "width", 1))
+                        except Exception:
+                            line_width = 1
+                        replacement = (
+                            go.Scattergl(x=[], y=[], mode=trace_mode, name=trace.name, line=dict(width=line_width))
+                            if desired_type == "scattergl"
+                            else go.Scatter(x=[], y=[], mode=trace_mode, name=trace.name, line=dict(width=line_width))
+                        )
+                        # Replace the trace in the figure and rebind live_dfs reference
+                        data_list = list(self.go_f.data)
+                        # find flat index of current trace object
+                        try:
+                            flat_idx = next(i for i, t in enumerate(data_list) if t is trace)
+                        except StopIteration:
+                            flat_idx = None
+                        if flat_idx is not None:
+                            data_list[flat_idx] = replacement
+                            self.go_f.data = tuple(data_list)
+                            trace = self.go_f.data[flat_idx]
+                            self.live_dfs[irow][icol][ilineno] = trace
                     if incremental:
                         trace.x = (
                             np.append(trace.x, x_data[no])[-max_points:]
@@ -1263,7 +1288,6 @@ class DataManipulator:
             )
         if not is_notebook() and not incremental:
             self.go_f.update_layout(uirevision=True)
-            time.sleep(0.5)
 
     def candle_df_filter(self, candledf: pd.DataFrame) -> tuple[np.ndarray, ...] | None:
         """

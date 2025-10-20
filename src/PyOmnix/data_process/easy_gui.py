@@ -586,14 +586,48 @@ class EasyDataWindow(QMainWindow):
                 needed = len(valid)
                 for _ in range(max(0, needed - existing)):
                     fig.add_trace(go.Scatter(x=[], y=[], mode="lines+markers"), row=1, col=1)
-                for i, (_, fname, _, _) in enumerate(valid):
+                # set names and adjust trace type based on point count
+                threshold_pts = 5000
+                for i, (_, fname, x_s, y_s) in enumerate(valid):
+                    # set name consistently
                     fig.data[i].name = fname
+                    # decide desired trace type by current dataset size
+                    try:
+                        npts = int(len(x_s))
+                    except Exception:
+                        npts = 0
+                    desired = "scattergl" if npts > threshold_pts else "scatter"
+                    current = getattr(fig.data[i], "type", "")
+                    if current != desired:
+                        # preserve display params compatible to both types
+                        mode = getattr(fig.data[i], "mode", "lines+markers")
+                        lw = 1
+                        try:
+                            lw = int(getattr(getattr(fig.data[i], "line", None), "width", 1))
+                        except Exception:
+                            lw = 1
+                        new_trace = (
+                            go.Scattergl(x=[], y=[], mode=mode, name=fname, line=dict(width=lw))
+                            if desired == "scattergl"
+                            else go.Scatter(x=[], y=[], mode=mode, name=fname, line=dict(width=lw))
+                        )
+                        data_list = list(fig.data)
+                        data_list[i] = new_trace
+                        fig.data = tuple(data_list)
             except Exception:
                 pass
 
-            # push data per-trace to satisfy type hints
+            # Push data directly to traces to avoid extra indirection and allow type swap
             for i, (_, _, x_series, y_series) in enumerate(valid):
-                self.dm.live_plot_update(0, 0, i, x_series, y_series)
+                try:
+                    # Convert Series to numpy arrays for performance
+                    x_vals = getattr(x_series, "to_numpy", lambda: x_series)()
+                    y_vals = getattr(y_series, "to_numpy", lambda: y_series)()
+                    fig.data[i].x = x_vals
+                    fig.data[i].y = y_vals
+                except Exception:
+                    # Fallback to the original update method if direct assignment fails
+                    self.dm.live_plot_update(0, 0, i, x_series, y_series)
 
         self._log(f"Plotted {len(valid)} file(s): {x_col} vs {y_col}")
 
