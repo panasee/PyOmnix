@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (  # type: ignore[attr-defined]
     QFileDialog,
     QFormLayout,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLineEdit,
     QMainWindow,
@@ -70,6 +71,68 @@ from .data_splitter import DataSplitter
 
 logger = get_logger(__name__)
 
+
+def apply_dark_fusion(app: QApplication) -> None:
+    """Apply Fusion style with a polished dark palette and concise stylesheet."""
+    try:
+        # Prefer Fusion for consistent cross-platform appearance
+        QtWidgets.QApplication.setStyle("Fusion")
+
+        # Base dark palette
+        palette = QtGui.QPalette()
+        base = QtGui.QColor(30, 30, 30)
+        alt_base = QtGui.QColor(40, 40, 40)
+        window = QtGui.QColor(24, 24, 24)
+        text = QtGui.QColor(230, 230, 230)
+        disabled_text = QtGui.QColor(127, 127, 127)
+        highlight = QtGui.QColor(53, 132, 228)  # accent blue
+        button = QtGui.QColor(45, 45, 45)
+        mid = QtGui.QColor(58, 58, 58)
+
+        palette.setColor(QtGui.QPalette.ColorRole.Window, window)
+        palette.setColor(QtGui.QPalette.ColorRole.WindowText, text)
+        palette.setColor(QtGui.QPalette.ColorRole.Base, base)
+        palette.setColor(QtGui.QPalette.ColorRole.AlternateBase, alt_base)
+        palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, base)
+        palette.setColor(QtGui.QPalette.ColorRole.ToolTipText, text)
+        palette.setColor(QtGui.QPalette.ColorRole.Text, text)
+        palette.setColor(QtGui.QPalette.ColorRole.PlaceholderText, disabled_text)
+        palette.setColor(QtGui.QPalette.ColorRole.Button, button)
+        palette.setColor(QtGui.QPalette.ColorRole.ButtonText, text)
+        palette.setColor(QtGui.QPalette.ColorRole.BrightText, QtGui.QColor(255, 84, 84))
+        palette.setColor(QtGui.QPalette.ColorRole.Highlight, highlight)
+        palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor(255, 255, 255))
+        palette.setColor(QtGui.QPalette.ColorRole.Link, highlight)
+        palette.setColor(QtGui.QPalette.ColorRole.Mid, mid)
+
+        app.setPalette(palette)
+
+        # Modern, restrained stylesheet for key widgets
+        app.setStyleSheet(
+            """
+            QToolTip { color: #e6e6e6; background: #2a2a2a; border: 1px solid #3c3c3c; }
+            QGroupBox { border: 1px solid #3c3c3c; border-radius: 6px; margin-top: 8px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; color: #cccccc; }
+            QTreeWidget { alternate-background-color: #282828; }
+            QHeaderView::section { background: #2b2b2b; padding: 6px; border: 0; border-right: 1px solid #3a3a3a; }
+            QLineEdit, QComboBox, QTextEdit { background: #2a2a2a; border: 1px solid #3c3c3c; border-radius: 4px; padding: 4px; }
+            QPushButton { background: #2e2e2e; border: 1px solid #3c3c3c; border-radius: 6px; padding: 6px 10px; }
+            QPushButton:hover { background: #353535; }
+            QPushButton:pressed { background: #3b3b3b; }
+            QSplitter::handle { background: #3a3a3a; }
+            QScrollBar:vertical { background: #262626; width: 10px; margin: 0; }
+            QScrollBar::handle:vertical { background: #3d3d3d; min-height: 24px; border-radius: 5px; }
+            QScrollBar:horizontal { background: #262626; height: 10px; margin: 0; }
+            QScrollBar::handle:horizontal { background: #3d3d3d; min-width: 24px; border-radius: 5px; }
+            """
+        )
+
+        # Comfortable default font on Windows; fallback otherwise
+        default_font = QtGui.QFont("Segoe UI", 10)
+        app.setFont(default_font)
+    except Exception:
+        # Non-fatal if styling fails
+        pass
 
 @dataclass
 class FileNode:
@@ -270,6 +333,11 @@ class EasyDataWindow(QMainWindow):
         hsplit.addWidget(right_panel)
         hsplit.setStretchFactor(0, 0)
         hsplit.setStretchFactor(1, 1)
+        try:
+            hsplit.setHandleWidth(8)
+            hsplit.setSizes([420, 980])
+        except Exception:
+            pass
 
         main_layout = QHBoxLayout(central)
         main_layout.addWidget(hsplit)
@@ -278,9 +346,28 @@ class EasyDataWindow(QMainWindow):
         left_layout = QVBoxLayout(left_panel)
 
         toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
         self.btn_new_folder = QPushButton("New Folder")
         self.btn_add_files = QPushButton("Add Files")
         self.btn_import = QPushButton("Import Project")
+        # Icons, tooltips, cursors
+        try:
+            style = self.style()
+            if style is not None:
+                self.btn_new_folder.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogNewFolder))
+                self.btn_add_files.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon))
+                self.btn_import.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowDown))
+        except Exception:
+            pass
+        self.btn_new_folder.setToolTip("Create a new in-memory folder")
+        self.btn_add_files.setToolTip("Load CSV/TXT or HDF5 files")
+        self.btn_import.setToolTip("Import a saved HDF5 project")
+        pointing = QtCore.Qt.CursorShape.PointingHandCursor
+        for b in (self.btn_new_folder, self.btn_add_files, self.btn_import):
+            try:
+                b.setCursor(QtGui.QCursor(pointing))
+            except Exception:
+                pass
         toolbar.addWidget(self.btn_new_folder)
         toolbar.addWidget(self.btn_add_files)
         toolbar.addWidget(self.btn_import)
@@ -288,12 +375,34 @@ class EasyDataWindow(QMainWindow):
 
         self.tree = QTreeWidget(left_panel)
         self.tree.setHeaderLabels(["Name", "Type", "Status", "Size"])
+        self.tree.setAlternatingRowColors(True)
+        self.tree.setUniformRowHeights(True)
+        self.tree.setAnimated(True)
+        self.tree.setAllColumnsShowFocus(True)
         self.tree.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        try:
+            header = self.tree.header()
+            if header is not None:
+                header.setStretchLastSection(False)
+                header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+                header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+                for col in (1, 2, 3):
+                    header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        except Exception:
+            pass
+        try:
+            self.tree.setSortingEnabled(True)
+            self.tree.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
+        except Exception:
+            pass
         left_layout.addWidget(self.tree, 1)
 
         # Plot controls
         plot_group = QGroupBox("Plot Controls", left_panel)
         form = QFormLayout(plot_group)
+        form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(6)
         self.combo_x = QComboBox(plot_group)
         self.combo_y = QComboBox(plot_group)
         form.addRow("X Axis:", self.combo_x)
@@ -303,9 +412,20 @@ class EasyDataWindow(QMainWindow):
         # Operations
         ops_group = QGroupBox("Operations", left_panel)
         ops_layout = QHBoxLayout(ops_group)
+        ops_layout.setSpacing(8)
         self.btn_plot = QPushButton("Plot")
         self.btn_split = QPushButton("Split Sweeps")
         self.btn_export = QPushButton("Export")
+        for b, tip in (
+            (self.btn_plot, "Plot selected data using chosen X/Y"),
+            (self.btn_split, "Detect and split multi-sweep files"),
+            (self.btn_export, "Export selected files/folders"),
+        ):
+            b.setToolTip(tip)
+            try:
+                b.setCursor(QtGui.QCursor(pointing))
+            except Exception:
+                pass
         ops_layout.addWidget(self.btn_plot)
         ops_layout.addWidget(self.btn_split)
         ops_layout.addWidget(self.btn_export)
@@ -315,6 +435,8 @@ class EasyDataWindow(QMainWindow):
         self.log_text = QTextEdit(left_panel)
         self.log_text.setReadOnly(True)
         left_layout.addWidget(self.log_text, 1)
+
+        # Margins and spacing tweaks (applied after right_layout is created below)
 
         # Right: plot widget
         right_layout = QVBoxLayout(right_panel)
@@ -349,6 +471,22 @@ class EasyDataWindow(QMainWindow):
         self.tree.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
 
+        # Apply margins and spacing after all layouts exist
+        try:
+            for lay in (left_layout, right_layout, main_layout):
+                lay.setContentsMargins(10, 10, 10, 10)
+                lay.setSpacing(10)
+        except Exception:
+            pass
+
+        # Status bar hint
+        sb = None
+        try:
+            sb = self.statusBar()
+        except Exception:
+            sb = None
+        if sb is not None:
+            sb.showMessage("Ready", 2000)
         self._log("Initialized PyQt GUI")
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # type: ignore[override]
@@ -993,7 +1131,7 @@ class EasyDataWindow(QMainWindow):
                     else [parent.child(i) for i in range(parent.childCount())]
                 )
                 for it in children:
-                    name = self._item_name(it)
+                    name = self._item_name(it) if it is not None else None
                     if name and name in all_items:
                         ordered.append(name)
                     traverse(it)
@@ -1141,7 +1279,19 @@ def gui_easy_data() -> None:
     """
     GUI for easy data manipulation
     """
-    app = QApplication.instance() or QApplication(sys.argv)
+    # High-DPI and modern style before app creation
+    try:
+        # PyQt6 keeps attributes under Qt.ApplicationAttribute
+        QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_EnableHighDpiScaling)  # type: ignore[attr-defined]
+        QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_UseHighDpiPixmaps)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    app = cast(QApplication, QApplication.instance() or QApplication(sys.argv))  # type: ignore[call-arg]
+    # Apply dark Fusion theme once
+    try:
+        apply_dark_fusion(app)
+    except Exception:
+        pass
     w = EasyDataWindow()
     w.show()
     # Avoid sys.exit in interactive environments (e.g., Jupyter) to prevent
