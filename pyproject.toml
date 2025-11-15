@@ -11,7 +11,7 @@ authors = [
 ]
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python",
@@ -28,7 +28,6 @@ keywords = [
     "ai",
     "machine-learning",
     "visualization",
-    "workflow",
 ]
 urls = {Homepage = "https://github.com/panasee/PyOmnix", Repository = "https://github.com/panasee/PyOmnix.git"}
 dependencies = [
@@ -40,7 +39,10 @@ dependencies = [
     "plotly>=5.24.0",
     "kaleido==0.1.0.post1",
     "jupyter",
+    "anywidget",
     "dash",
+    "PyQt6>=6.7.0",
+    "PyQt6-WebEngine>=6.7.0",
     "prefect>=3.2.9",
     "langchain>=0.3.20",
     "langgraph>=0.3.18",
@@ -51,10 +53,10 @@ dependencies = [
     "langchain-google-genai",
     "langchain-community",
     "pydantic>=2.10.6",
+    "questionary",
 ]
 
 [project.optional-dependencies]
-gui = ["PyQt6>=6.7.0"]
 dev = [
     "ruff>=0.10.0",
     "mypy>=1.15.0",
@@ -70,6 +72,7 @@ exclude = ["tests*", "docs*", "examples*", "*.tests", "*.tests.*"]
 
 [project.scripts]
 gui_pan_color = "pyomnix.data_process:DataManipulator.gui_pan_color"
+gui_easy_data = "pyomnix.data_process.easy_gui:gui_easy_data"
 
 [tool.setuptools]
 include-package-data = true
@@ -79,6 +82,6 @@ pyomnix = ["pltconfig/pan_color.json"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 select = ["E", "F", "B", "I", "N", "UP", "PL", "RUF"]
 ignore = []

@@ -18,7 +18,6 @@ from typing import Annotated, Any, Optional
 import tiktoken
 from langchain_core.messages import (
     AIMessage,
-    AnyMessage,
     BaseMessage,
     ChatMessage,
     FunctionMessage,
@@ -26,8 +25,9 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.messages.utils import messages_from_dict
 from langchain_core.messages.base import messages_to_dict
+from langchain_core.messages.utils import messages_from_dict
+from langchain_core.prompt_values import ChatPromptValue
 from langchain_core.runnables import Runnable
 from langgraph.graph import add_messages
 from PIL import Image
@@ -166,7 +166,9 @@ class ModelConfig:
         with open(self.config_json, "w", encoding="utf-8") as f:
             json.dump(self.config, f, indent=4)
 
-    def set_api_config(self, provider: str, *, api_key: str | None, api_url: str | None) -> None:
+    def set_api_config(
+        self, provider: str, *, api_key: str | None, api_url: str | None
+    ) -> None:
         """
         Set/Add the API key and URL for a specific provider.
 
@@ -253,7 +255,7 @@ class ChatMessageDict(BaseModel):
     tool_call_id: str | None = None
     name: str | None = None
 
-    def to_langchain_message(self) -> AnyMessage:
+    def to_langchain_message(self) -> BaseMessage:
         """Convert to appropriate LangChain message type."""
         match self.role.lower():
             case "system":
@@ -263,7 +265,9 @@ class ChatMessageDict(BaseModel):
             case "assistant":
                 return AIMessage(content=self.content)
             case "tool":
-                return ToolMessage(content=self.content, tool_call_id=self.tool_call_id or "")
+                return ToolMessage(
+                    content=self.content, tool_call_id=self.tool_call_id or ""
+                )
             case "function":
                 return FunctionMessage(content=self.content, name=self.name or "")
             case _:
@@ -276,7 +280,7 @@ class ChatMessagesRaw(BaseModel):
     """
 
     messages: Annotated[
-        list[AnyMessage],
+        list[BaseMessage],
         Field(description="The list of messages", default_factory=list),
         add_messages,
     ]
@@ -337,7 +341,7 @@ class ChatMessages(ChatMessagesRaw):
     trimed_file_path: Path | None = None
     trimed_json_file_path: Path | None = None
     trimed_messages: Annotated[
-        list[AnyMessage],
+        list[BaseMessage],
         Field(description="The list of trimmed messages", default_factory=list),
         add_messages,
     ]
@@ -348,11 +352,15 @@ class ChatMessages(ChatMessagesRaw):
         # used to store the trimmed messages
         if self.file_sync:
             (OMNIX_PATH / "chat_files").mkdir(parents=True, exist_ok=True)
-            self.file_path = (OMNIX_PATH / "chat_files" / self.file_name).with_suffix(".txt")
-            self.json_file_path = (OMNIX_PATH / "chat_files" / self.file_name).with_suffix(".json")
-            self.trimed_file_path = (OMNIX_PATH / "chat_files" / self.trimed_file_name).with_suffix(
+            self.file_path = (OMNIX_PATH / "chat_files" / self.file_name).with_suffix(
                 ".txt"
             )
+            self.json_file_path = (
+                OMNIX_PATH / "chat_files" / self.file_name
+            ).with_suffix(".json")
+            self.trimed_file_path = (
+                OMNIX_PATH / "chat_files" / self.trimed_file_name
+            ).with_suffix(".txt")
             self.trimed_json_file_path = (
                 OMNIX_PATH / "chat_files" / self.trimed_file_name
             ).with_suffix(".json")
@@ -364,7 +372,9 @@ class ChatMessages(ChatMessagesRaw):
         """
         Convert dictionaries in the messages list to ChatMessage objects.
         """
-        logger.validate(isinstance(v, list), "Messages must be a list.")
+        logger.validate(
+            isinstance(v, list), "ChatMessages Init: Messages must be a list."
+        )
         v_new = []
         for i in v:
             if isinstance(i, BaseMessage):
@@ -402,7 +412,9 @@ class ChatMessages(ChatMessagesRaw):
                     "A tool message should only follow an assistant message that requested the tool invocation.",
                 )
             logger.validate(
-                isinstance(v[i], (HumanMessage, AIMessage, ToolMessage, FunctionMessage)),
+                isinstance(
+                    v[i], (HumanMessage, AIMessage, ToolMessage, FunctionMessage)
+                ),
                 "The message must be a user, assistant, tool or function message.",
             )
             logger.validate(
@@ -441,12 +453,19 @@ class ChatMessages(ChatMessagesRaw):
                     if isinstance(msg.content, str):
                         content = msg.content
                     else:
-                        content = str(msg.content)  # Basic serialization for complex content
+                        content = str(
+                            msg.content
+                        )  # Basic serialization for complex content
                     f.write(
                         f"{role}\n\t Reasoning: {msg.additional_kwargs.get('reasoning_content', '')}\n\t Content: {content}\n"
                     )
                 # Write JSON with proper formatting between messages
-                json.dump(messages_to_dict(self.messages), f_json, ensure_ascii=False, indent=4)
+                json.dump(
+                    messages_to_dict(self.messages),
+                    f_json,
+                    ensure_ascii=False,
+                    indent=4,
+                )
 
     def _sync_to_trimed_file(self) -> None:
         """Sync current trimmed messages to the file."""
@@ -460,7 +479,9 @@ class ChatMessages(ChatMessagesRaw):
                     if isinstance(msg.content, str):
                         content = msg.content
                     else:
-                        content = str(msg.content)  # Basic serialization for complex content
+                        content = str(
+                            msg.content
+                        )  # Basic serialization for complex content
                     f.write(
                         f"{role}\n\t Reasoning: {msg.additional_kwargs.get('reasoning_content', '')}\n\t Content: {content}\n"
                     )
@@ -496,7 +517,7 @@ class ChatMessages(ChatMessagesRaw):
         *,
         max_tokens: int | None = None,
         temperature: float | None = None,
-        schema: BaseModel | dict | None = None,
+        schema: dict | type = None,
     ) -> AIMessage:
         """
         Request a response from the model. (only supports invoke currently). The response will be appended to the messages and also be returned.
@@ -522,13 +543,15 @@ class ChatMessages(ChatMessagesRaw):
             self._sync_to_file()
         return response
 
-    def __add__(self, other: ChatMessagesRaw | AnyMessage | list[AnyMessage]) -> "ChatMessages":
+    def __add__(
+        self, other: ChatMessagesRaw | BaseMessage | list[BaseMessage]
+    ) -> "ChatMessages":
         """
         Add two ChatMessages objects together, with structural validation.
         Be careful with the implementation of add_messages, this will merge messages with same id.
 
         Args:
-            other: Either a ChatMessagesRaw object, a single AnyMessage, or a list of AnyMessage objects
+            other: Either a ChatMessagesRaw object, a single BaseMessage, or a list of BaseMessage objects
 
         Returns:
             A new ChatMessages instance with the combined messages
@@ -538,7 +561,7 @@ class ChatMessages(ChatMessagesRaw):
         """
         logger.validate(
             isinstance(other, (ChatMessagesRaw, BaseMessage, list)),
-            "Other must be a ChatMessagesRaw object or a AnyMessage object or a list of AnyMessage objects.",
+            "Other must be a ChatMessagesRaw object or a BaseMessage object or a list of BaseMessage objects.",
         )
 
         # Create a copy of the current instance's data
@@ -553,7 +576,7 @@ class ChatMessages(ChatMessagesRaw):
         else:
             logger.validate(
                 all(isinstance(i, BaseMessage) for i in other),
-                "All items in the list must be AnyMessage objects.",
+                "All items in the list must be BaseMessage objects.",
             )
             data["messages"] = self.messages + other
 
@@ -579,7 +602,9 @@ class ChatMessages(ChatMessagesRaw):
         """
         Summarize the messages into a single message within the max_tokens.
         """
-        logger.validate(len(self.messages) > 2, "There must be at least 3 messages to summarize.")
+        logger.validate(
+            len(self.messages) > 2, "There must be at least 3 messages to summarize."
+        )
         system_message = SystemMessage(
             content=SUMMARIZE_PROMPT_SYS,
         )
@@ -641,7 +666,9 @@ class ChatMessages(ChatMessagesRaw):
         if preserve_conversation_turns > 0:
             # Find the last N human messages and their corresponding AI responses
             human_index = [
-                i for i, msg in enumerate(self.messages) if isinstance(msg, HumanMessage)
+                i
+                for i, msg in enumerate(self.messages)
+                if isinstance(msg, HumanMessage)
             ][-preserve_conversation_turns]
 
             preserved_messages = self.messages[human_index:]
@@ -692,7 +719,9 @@ class ChatMessages(ChatMessagesRaw):
                 content_tokens += 0
 
             # Add tokens for message role (typically 1-4 tokens)
-            role_tokens += len(encoding.encode(message.__class__.__name__.replace("Message", "")))
+            role_tokens += len(
+                encoding.encode(message.__class__.__name__.replace("Message", ""))
+            )
 
         logger.debug("Content tokens: %s, Role tokens: %s", content_tokens, role_tokens)
         return content_tokens + role_tokens
@@ -722,15 +751,20 @@ class ChatRequest(BaseModel):
     A class for representing a whole chat request for the RawModels.
     """
 
-    provider_api: Annotated[str, Field(description="The full name of the provider-modelapi")]
-    model_name: Annotated[str, Field(description="The exact model name within the provider")]
-    messages: list[ChatMessages]  # to be able to do batching
+    provider_api: Annotated[
+        str, Field(description="The full name of the provider-modelapi")
+    ]
+    model_name: Annotated[
+        str, Field(description="The exact model name within the provider")
+    ]
+    messages: list[ChatMessages | ChatPromptValue]  # to be able to do batching
     stream: bool = False
     invoke_config: dict[str, str] | None = None
     temperature: float = 0.7
     max_tokens: int | None = None
     timeout: int | None = None
     max_retries: int = 2
+    out_schema: dict | type | None = None
 
     @field_validator("messages", mode="before")
     @classmethod
@@ -738,11 +772,17 @@ class ChatRequest(BaseModel):
         """
         Convert dictionaries in the messages list to ChatMessage objects.
         """
-        logger.validate(isinstance(v, list), "Messages must be a list.")
-        if isinstance(v[0], ChatMessages):
+        logger.validate(
+            isinstance(v, list | ChatPromptValue | ChatMessages), "ChatRequest Init: Messages must be a list or a ChatPromptValue."
+        )
+        if isinstance(v, ChatPromptValue | ChatMessages):
+            return [v]
+        elif isinstance(v[0], ChatMessages):
             return v
-        else:
+        elif isinstance(v[0], list):
             return [ChatMessages(messages=i) for i in v]
+        else:
+            return [ChatMessages(messages=v)]
 
 
 class RawModels:
@@ -764,15 +804,21 @@ class RawModels:
         """
         Update the token count for the model.
         """
-        logger.validate(isinstance(response, AIMessage), "Response must be an AIMessage.")
+        if not isinstance(response, AIMessage):
+            logger.debug("Response is not AIMessage, cannot count the tokens.")
+            return
         model_name = response.response_metadata["model_name"]
         if model_name not in self.input_tokens[provider]:
             self.input_tokens[provider][model_name] = 0
         if model_name not in self.output_tokens[provider]:
             self.output_tokens[provider][model_name] = 0
 
-        self.output_tokens[provider][model_name] += response.usage_metadata["output_tokens"]
-        self.input_tokens[provider][model_name] += response.usage_metadata["input_tokens"]
+        self.output_tokens[provider][model_name] += response.usage_metadata[
+            "output_tokens"
+        ]
+        self.input_tokens[provider][model_name] += response.usage_metadata[
+            "input_tokens"
+        ]
 
     def _get_response(
         self,
@@ -791,10 +837,15 @@ class RawModels:
             max_retries=request_details.max_retries,
         )
 
+        if request_details.out_schema is not None:
+            chat_model = chat_model.with_structured_output(request_details.out_schema)
+
         if len(request_details.messages) > 1:
             logger.info("Batching messages for %s", chat_model)
-            logger.validate(not request_details.stream, "Batch does not support streaming.")
-            response = chat_model.batch(request_details.messages)
+            logger.validate(
+                not request_details.stream, "Batch does not support streaming."
+            )
+            response = chat_model.batch([i.messages for i in request_details.messages])
         else:
             response = (
                 chat_model.invoke(
@@ -812,7 +863,8 @@ class RawModels:
         self,
         provider_api: str,
         model: str,
-        messages: list[dict[str, str] | AnyMessage] | list[list[dict[str, str] | AnyMessage]],
+        messages: list[dict[str, str] | BaseMessage]
+        | list[list[dict[str, str] | BaseMessage]],
         *,
         stream: bool = False,
         temperature: float = 0.7,
@@ -820,8 +872,9 @@ class RawModels:
         timeout: int | None = None,
         max_retries: int = 2,
         invoke_config: dict[str, Any] | None = None,
+        schema: dict | type | None = None,
         **kwargs,
-    ) -> dict | Generator[dict, None, None]:
+    ) -> list[AIMessage | Generator[dict, None, None]]:
         """
         Send a chat completion request to the model.
 
@@ -848,6 +901,7 @@ class RawModels:
             max_tokens=max_tokens,
             timeout=timeout,
             max_retries=max_retries,
+            out_schema=schema,
         )
 
         response = self._get_response(request, **kwargs)
@@ -857,7 +911,7 @@ class RawModels:
             return response
 
         provider = ModelConfig.get_provider_model(request.provider_api)[0]
-        if isinstance(response, AIMessage):
+        if not isinstance(response, list):
             response = [response]
         for r in response:
             self._update_token_count(provider, r)
@@ -868,9 +922,9 @@ class RawModels:
         self,
         provider_api: str,
         model: str,
-        texts: str | list[str | AnyMessage],
+        texts: str | list[str | BaseMessage],
         images: list[str | Path | Image.Image] | list[list[str | Path | Image.Image]],
-        system_messages: str | list[str | AnyMessage] | None = None,
+        system_messages: str | list[str | BaseMessage] | None = None,
         stream: bool = False,
         **kwargs,
     ) -> str:
@@ -931,7 +985,9 @@ class RawModels:
                     content.append(
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{image_data}"},
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_data}"
+                            },
                         }
                     )
 
@@ -963,7 +1019,9 @@ class RawModels:
                 )
                 return
 
-        return self.chat_completion(provider_api, model, batch_messages, stream=stream, **kwargs)
+        return self.chat_completion(
+            provider_api, model, batch_messages, stream=stream, **kwargs
+        )
 
     def _process_image(self, image: str | Path | Image.Image) -> str:
         """

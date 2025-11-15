@@ -1,7 +1,7 @@
 import copy
 from collections.abc import Sequence
 from itertools import groupby
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -35,6 +35,7 @@ class ObjectArray:
             unique: If True, ensures all elements in the array are unique
         """
         self.shape = dims
+        self.size = np.prod(dims)
         self.fill_value = fill_value
         self.unique = unique
         self.objects = self._create_objects(dims) # customized initialization can be implemented by overriding this method
@@ -64,9 +65,7 @@ class ObjectArray:
                 remaining //= dim
 
             # Format the element representation
-            obj_repr = str(obj).replace(
-                "\n", "\n  "
-            )  # Indent any multi-line representations
+            obj_repr = str(obj).replace("\n", "\n  ")  # Indent any multi-line representations
             result += f"  {tuple(indices)}: {obj_repr}\n"
 
         return result
@@ -92,9 +91,7 @@ class ObjectArray:
         return [
             item
             for sublist in lst
-            for item in (
-                self._flatten(sublist) if isinstance(sublist, list) else [sublist]
-            )
+            for item in (self._flatten(sublist) if isinstance(sublist, list) else [sublist])
         ]
 
     def __getitem__(self, index: tuple[int, ...] | int) -> dict:
@@ -123,6 +120,10 @@ class ObjectArray:
             ValueError: If unique is True and the value already exists in the array
         """
         if isinstance(index, int):
+            if index == -1:
+                logger.validate(self.pointer_next is not None, "No space to set value")
+                self.__setitem__(self.pointer_next, value)
+                return
             index = np.unravel_index(index, self.shape)
         arr = self.objects
         for idx in index[:-1]:
@@ -174,6 +175,7 @@ class ObjectArray:
         Returns:
             bool: True if the value is unique (or not required uniqueness), False otherwise
         """
+        # if not required uniqueness, return True
         if not self.unique:
             return True
 
@@ -183,6 +185,18 @@ class ObjectArray:
         
         if other_locations:
             return False
+        else:
+            return True
+
+    @property
+    def pointer_next(self) -> int | None:
+        """
+        return the index of the next element that is not filled values by default
+        """
+        for i in range(self.size):
+            if self._are_equal(self[i], self.fill_value):
+                return i
+        return None
 
     def extend(self, *dims: int) -> None:
         """
@@ -247,9 +261,7 @@ class ObjectArray:
         """
         if len(source_idx) == len(source_shape):
             # We've reached the elements, copy the value
-            self._set_subarray(
-                target, target_idx, self._get_subarray(source, source_idx)
-            )
+            self._set_subarray(target, target_idx, self._get_subarray(source, source_idx))
             return
 
         # Get current dimension
@@ -257,9 +269,7 @@ class ObjectArray:
 
         # Recursively copy elements for this dimension
         for i in range(source_shape[dim_idx]):
-            self._copy_elements(
-                source, target, source_shape, source_idx + (i,), target_idx + (i,)
-            )
+            self._copy_elements(source, target, source_shape, source_idx + (i,), target_idx + (i,))
 
     def find(self, search_value: Any) -> list[tuple[int, ...]]:
         """
@@ -328,7 +338,7 @@ class CacheArray:
         self.least_length = least_length
 
     @property
-    def mean(self) -> float:
+    def mean(self) -> float | None:
         """return the mean of the cache"""
         if self.cache.size == 0:
             logger.warning("Cache is empty")
@@ -338,7 +348,7 @@ class CacheArray:
 
     def update_cache(
         self, new_value: float | Sequence[float]
-    ) -> tuple[Sequence[float], bool]:
+    ) -> None:
         """
         update the cache using newest values
         """
@@ -358,7 +368,7 @@ class CacheArray:
             var_crit (float): the criterion of the variance
         """
         if self.cache.size <= self.least_length:
-            logger.warning("Cache is not enough to judge the stability")
+            logger.debug("Cache is not enough to judge the stability")
             var_stable = False
         else:
             if var_crit is None:
@@ -463,12 +473,8 @@ def symmetrize(
     if not isinstance(obj_col, (tuple, list)):
         obj_col = [obj_col]
     # Separate the negative and positive parts for interpolation
-    df_negative = ori_df[ori_df[index_col] < neutral_point][
-        [index_col] + obj_col
-    ].copy()
-    df_positive = ori_df[ori_df[index_col] > neutral_point][
-        [index_col] + obj_col
-    ].copy()
+    df_negative = ori_df[ori_df[index_col] < neutral_point][[index_col] + obj_col].copy()
+    df_positive = ori_df[ori_df[index_col] > neutral_point][[index_col] + obj_col].copy()
     # For symmetrization, we need to flip the negative part and make positions positive
     df_negative[index_col] = -df_negative[index_col]
     # sort them
@@ -539,9 +545,7 @@ def difference(
             relative=relative,
             interpolate_method=interpolate_method,
         )
-    logger.validate(
-        len(index_col) == 2, "index_col should be a sequence of two elements"
-    )
+    logger.validate(len(index_col) == 2, "index_col should be a sequence of two elements")
     if isinstance(target_col, (str, float, int)):
         return difference(
             ori_df,
@@ -659,9 +663,7 @@ def identify_direction(
                     rle[lookahead_idx][1] < min_count or rle[lookahead_idx][0] == 0
                 ):
                     lookahead_idx += 1
-                assert lookahead_idx < len(rle), (
-                    "The direction for starting is not clear"
-                )
+                assert lookahead_idx < len(rle), "The direction for starting is not clear"
                 replaced_direction = rle[lookahead_idx][0]
             filtered_directions.extend([replaced_direction] * length)
 

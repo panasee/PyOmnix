@@ -96,13 +96,13 @@ def setup_logger(
     name: str = LoggerConfig.DEFAULT_NAME,
     log_level: int = LoggerConfig.DEFAULT_LEVEL,
     console_level: int | None = None,
-    file_level: int | None = None,
+    file_level: int | None = logging.DEBUG,
     log_file: Path | str | None = LoggerConfig.DEFAULT_LOG_FILE,
     log_format: str = LoggerConfig.DEFAULT_FORMAT,
     date_format: str = LoggerConfig.DEFAULT_DATE_FORMAT,
     propagate: bool = False,
     add_trace_level: bool = True,
-    rotation: str = None,  # Rotation type: 'size' or 'time'
+    rotation: str | None = None,  # Rotation type: 'size' or 'time'
     max_size: int = 10 * 1024 * 1024,  # 10 MB
     backup_count: int = 3,
     interval: int = 1,  # Days
