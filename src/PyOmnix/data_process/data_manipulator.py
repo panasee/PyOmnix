@@ -1194,15 +1194,17 @@ class DataManipulator:
                         "provide correct scatter data, y_data should be provided",
                     )
                     # Decide desired trace type and style based on options and point count
-                    trace.x = x_data[no]
-                    trace.y = y_data[no]
                     # Toggle markers for dense data to reduce draw calls
-                    if len(x_data[no]) > self._marker_toggle_threshold:
+                    if incremental:
+                        pts_len = len(trace.x) + 1
+                    else:
+                        pts_len = len(x_data[no])
+                    if pts_len > self._marker_toggle_threshold:
                         trace.mode = "lines"
                     else:
                         trace.mode = "lines+markers"
                     # Disable hover for extremely dense data to reduce hover computation
-                    if len(x_data[no]) > self._disable_hover_threshold:
+                    if pts_len > self._disable_hover_threshold:
                         trace.hoverinfo = "skip"
                         self.go_f.update_layout(hovermode=False)
                         self.go_f.update_xaxes(showspikes=False)

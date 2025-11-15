@@ -1,7 +1,7 @@
 import copy
 from collections.abc import Sequence
 from itertools import groupby
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -65,9 +65,7 @@ class ObjectArray:
                 remaining //= dim
 
             # Format the element representation
-            obj_repr = str(obj).replace(
-                "\n", "\n  "
-            )  # Indent any multi-line representations
+            obj_repr = str(obj).replace("\n", "\n  ")  # Indent any multi-line representations
             result += f"  {tuple(indices)}: {obj_repr}\n"
 
         return result
@@ -93,9 +91,7 @@ class ObjectArray:
         return [
             item
             for sublist in lst
-            for item in (
-                self._flatten(sublist) if isinstance(sublist, list) else [sublist]
-            )
+            for item in (self._flatten(sublist) if isinstance(sublist, list) else [sublist])
         ]
 
     def __getitem__(self, index: tuple[int, ...] | int) -> dict:
@@ -265,9 +261,7 @@ class ObjectArray:
         """
         if len(source_idx) == len(source_shape):
             # We've reached the elements, copy the value
-            self._set_subarray(
-                target, target_idx, self._get_subarray(source, source_idx)
-            )
+            self._set_subarray(target, target_idx, self._get_subarray(source, source_idx))
             return
 
         # Get current dimension
@@ -275,9 +269,7 @@ class ObjectArray:
 
         # Recursively copy elements for this dimension
         for i in range(source_shape[dim_idx]):
-            self._copy_elements(
-                source, target, source_shape, source_idx + (i,), target_idx + (i,)
-            )
+            self._copy_elements(source, target, source_shape, source_idx + (i,), target_idx + (i,))
 
     def find(self, search_value: Any) -> list[tuple[int, ...]]:
         """
@@ -481,12 +473,8 @@ def symmetrize(
     if not isinstance(obj_col, (tuple, list)):
         obj_col = [obj_col]
     # Separate the negative and positive parts for interpolation
-    df_negative = ori_df[ori_df[index_col] < neutral_point][
-        [index_col] + obj_col
-    ].copy()
-    df_positive = ori_df[ori_df[index_col] > neutral_point][
-        [index_col] + obj_col
-    ].copy()
+    df_negative = ori_df[ori_df[index_col] < neutral_point][[index_col] + obj_col].copy()
+    df_positive = ori_df[ori_df[index_col] > neutral_point][[index_col] + obj_col].copy()
     # For symmetrization, we need to flip the negative part and make positions positive
     df_negative[index_col] = -df_negative[index_col]
     # sort them
@@ -557,9 +545,7 @@ def difference(
             relative=relative,
             interpolate_method=interpolate_method,
         )
-    logger.validate(
-        len(index_col) == 2, "index_col should be a sequence of two elements"
-    )
+    logger.validate(len(index_col) == 2, "index_col should be a sequence of two elements")
     if isinstance(target_col, (str, float, int)):
         return difference(
             ori_df,
@@ -677,9 +663,7 @@ def identify_direction(
                     rle[lookahead_idx][1] < min_count or rle[lookahead_idx][0] == 0
                 ):
                     lookahead_idx += 1
-                assert lookahead_idx < len(rle), (
-                    "The direction for starting is not clear"
-                )
+                assert lookahead_idx < len(rle), "The direction for starting is not clear"
                 replaced_direction = rle[lookahead_idx][0]
             filtered_directions.extend([replaced_direction] * length)
 
