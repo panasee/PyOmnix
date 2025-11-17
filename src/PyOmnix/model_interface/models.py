@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Annotated, Any, Optional
 
 import tiktoken
+from langchain.chat_models import init_chat_model
+from langchain_core.exceptions import LangChainException
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -27,8 +29,9 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.base import messages_to_dict
 from langchain_core.messages.utils import messages_from_dict
+from langchain_core.language_models import BaseChatModel
+from langchain.chat_models.base import _ConfigurableModel
 from langchain_core.prompt_values import ChatPromptValue
-from langchain_core.runnables import Runnable
 from langgraph.graph import add_messages
 from PIL import Image
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -38,6 +41,14 @@ from pyomnix.omnix_logger import get_logger
 
 logger = get_logger(__name__)
 
+PROVIDER_ALIASES = {  # use small letters
+    "openai": {"openai", "gpt"},
+    "google_vertexai": {"vertexai", "vertex"},
+    "google_genai": {"gemini", "aistudio", "genai", "google"},
+    "anthropic": {"anthropic", "claude"},
+    "deepseek": {"deepseek", "ds"},
+    "groq": {"groq"}
+}
 
 class ModelConfig:
     """
@@ -48,18 +59,23 @@ class ModelConfig:
 
     _instance: Optional["ModelConfig"] = None
 
+    _instance_lock = threading.Lock()
+
     def __new__(cls) -> "ModelConfig":
         """
-        Implement the Singleton pattern by ensuring only one instance is created.
+        Implement the Singleton pattern by ensuring only one instance is created,
+        with multi-thread safety.
 
         Returns:
             The single instance of ModelAPIConfig
         """
         if cls._instance is None:
-            logger.debug("Creating new ModelAPIConfig instance")
-            cls._instance = super(ModelConfig, cls).__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
+            with cls._instance_lock:
+                if cls._instance is None:
+                    logger.debug("Creating new ModelConfig instance thread-safely")
+                    cls._instance = super(ModelConfig, cls).__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance  # type: ignore[return-value]
 
     def __init__(self, tracing: bool = False):
         """
@@ -77,7 +93,7 @@ class ModelConfig:
         if tracing:
             self.setup_langsmith()
         self._initialized = True
-        self.models = {}
+        self.model_factories: dict[str, _ConfigurableModel] = {}
 
     def _load_config(self) -> None:
         """Load the configuration from the JSON file if it exists."""
@@ -97,68 +113,88 @@ class ModelConfig:
         """
         Setup LangSmith for tracing and monitoring.
         """
+        api_cfg = self.get_api_config("langsmith")
+        if api_cfg is None:
+            logger.error("LangSmith API config missing; skipping tracing setup.")
+            return
+        api_key, base_url, _ = api_cfg
         os.environ["LANGSMITH_TRACING"] = "true"
-        os.environ["LANGSMITH_ENDPOINT"] = self.get_api_config("langsmith")[1]
-        os.environ["LANGSMITH_API_KEY"] = self.get_api_config("langsmith")[0]
+        os.environ["LANGSMITH_ENDPOINT"] = base_url
+        os.environ["LANGSMITH_API_KEY"] = api_key
         os.environ["LANGSMITH_PROJECT"] = "pyomnix"
 
     @staticmethod
-    def get_provider_model(model_full: str) -> tuple[str, str]:
+    def extract_provider_model(full_name: str) -> tuple[str, str]:
         """
-        Get the provider and model from the model full name.
+        Get the provider and api name from the full name.
+        The format is "provider-api", where "api" is actually the model api used instead of the specific model.
+        (deepseek/google_genai/google_vertexai/openai/anthropic)
         """
-        provider_model = model_full.split("-")
+        provider_model = full_name.split("-")
         if len(provider_model) == 2:
+            provider, api_name = provider_model
+        elif len(provider_model) == 1:
             provider = provider_model[0]
-            model = provider_model[1]
+            api_name = provider
         else:
-            model = provider_model[0]
-            provider = model
-        return provider, model
+            logger.raise_error(f"Invalid model full name: {full_name}", ValueError)
+        return provider, api_name
 
-    def setup_models(self, models_fullname: str | list[str] = "deepseek"):
+    def setup_model_factory(self, factory_fullname: str | list[str] = "deepseek", **user_kwargs):
         """
-        Setup providers and model apis (the api is a interface of langchain, not the real model called, actually deepseek/openai api can be used for most models). Indicate the provider before the model name if used. (e.g. "siliconflow-deepseek")
-
-        Args:
-            models_name(str | list[str]): The fullname of the model to use
+        Setup providers and model apis (deepseek/openai api can be used for most models). Indicate the provider before the model name if used. (e.g. "siliconflow-deepseek")
+        The provider portion is looked up in the local config for credentials, while the API portion selects the LangChain integration to use.
         """
-        model_module_dict = {
-            "openai": ["langchain_openai", "ChatOpenAI"],
-            "gemini": ["langchain_google_genai", "ChatGoogleGenerativeAI"],
-            "claude": ["langchain_anthropic", "ChatAnthropic"],
-            "deepseek": ["langchain_deepseek", "ChatDeepSeek"],
-            "qwen": ["langchain_community.chat_models.tongyi", "ChatTongyi"],
-        }
-        if isinstance(models_fullname, str):
-            models_fullname = [models_fullname]
+        def canonicalize_provider(provider: str) -> tuple[str, bool]:
+            """
+            Canonicalize the model name and judge if it is a intrinsically supported provider.
+            """
+            for target, aliases in PROVIDER_ALIASES.items():
+                if provider.strip().lower() in aliases:
+                    return target, True
+            return provider, False
 
-        for model_full in models_fullname:
-            provider, model = self.get_provider_model(model_full)
+        if isinstance(factory_fullname, str):
+            factory_fullname = [factory_fullname]
 
-            logger.validate(
-                model in model_module_dict,
-                f"Model {model} not found in model_module_dict.",
-            )
-            if model_full in self.models:
-                logger.info("Model %s already exists in models.", model)
+        initialized: dict[str, _ConfigurableModel] = {}
+
+        for factory_name in factory_fullname:
+            provider, api_name = self.extract_provider_model(factory_name)
+
+            if factory_name in self.model_factories:
+                logger.info("Model %s already initialized; reusing factory.", factory_name)
+                initialized[factory_name] = self.model_factories[factory_name]
                 continue
-            module = importlib.import_module(model_module_dict[model][0])
-            if model == "deepseek":
-                self.models[model_full] = partial(
-                    getattr(module, model_module_dict[model][1]),
-                    api_key=self.get_api_config(provider)[0],
-                    api_base=self.get_api_config(provider)[1],
+
+            provider, is_intrinsically_supported = canonicalize_provider(provider)
+            api_key, base_url, provider_kwargs = self.get_api_config(provider)
+            total_kwargs = {**provider_kwargs, **user_kwargs}  # user_kwargs will override provider_kwargs
+
+            if not is_intrinsically_supported:
+                model_factory = init_chat_model(
+                    model_provider=provider,
+                    configurable_fields="any",
+                    api_key=api_key,
+                    base_url=base_url,
+                    **total_kwargs,
                 )
             else:
-                self.models[model_full] = partial(
-                    getattr(module, model_module_dict[model][1]),
-                    api_key=self.get_api_config(provider)[0],
-                    base_url=self.get_api_config(provider)[1],
+                model_factory = init_chat_model(
+                    model_provider=api_name,
+                    configurable_fields="any",
+                    api_key=api_key,
+                    **total_kwargs,
                 )
-            # base_url and api_base are the same, for different apis
-            logger.info("Model %s initialized successfully.", model)
-        return {model: self.models[model] for model in models_fullname}
+            self.model_factories[factory_name] = model_factory
+            initialized[factory_name] = model_factory
+            logger.info(
+                "Model API %s initialized successfully for provider %s.",
+                api_name,
+                provider,
+            )
+
+        return initialized
         ##TODO: add interface for local models
 
     def save_config(self) -> None:
@@ -167,7 +203,7 @@ class ModelConfig:
             json.dump(self.config, f, indent=4)
 
     def set_api_config(
-        self, provider: str, *, api_key: str | None, api_url: str | None
+        self, provider: str, *, api_key: str | None, base_url: str | None
     ) -> None:
         """
         Set/Add the API key and URL for a specific provider.
@@ -175,17 +211,17 @@ class ModelConfig:
         Args:
             provider: The model provider (e.g., 'openai', 'google', 'anthropic')
             api_key: The API key to set
-            api_url: The API URL to set
+            base_url: The API URL to set
         """
         if provider not in self.config:
             self.config[provider] = {}
         if api_key is not None:
             self.config[provider]["api_key"] = api_key
-        if api_url is not None:
-            self.config[provider]["api_url"] = api_url
+        if base_url is not None:
+            self.config[provider]["base_url"] = base_url
         self.save_config()
 
-    def get_api_config(self, provider: str) -> tuple[str, str] | None:
+    def get_api_config(self, provider: str) -> tuple[str, str, dict[str, Any]]:
         """
         Get the API key for a specific provider.
 
@@ -195,15 +231,14 @@ class ModelConfig:
         Returns:
             The API key if found, None otherwise
         """
-        if (
-            provider in self.config
-            and "api_key" in self.config[provider]
-            and "api_url" in self.config[provider]
-        ):
-            return self.config[provider]["api_key"], self.config[provider]["api_url"]
-        else:
-            logger.error("Uncomplete API config found for provider %s", provider)
-            return None
+        provider_cfg: dict[str, str] | None = self.config.get(provider)
+        if provider_cfg is None:
+            logger.raise_error(f"Provider {provider} not found in configuration", ValueError)  # type: ignore[return-value]
+
+        api_key = provider_cfg.pop("api_key")
+        base_url = provider_cfg.pop("base_url")
+        provoder_kwargs = provider_cfg
+        return api_key, base_url, provoder_kwargs
 
     def list_providers(self) -> list[str]:
         """

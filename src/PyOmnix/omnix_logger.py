@@ -15,6 +15,7 @@ all handlers are properly closed and resources are released.
 import logging
 import sys
 import traceback
+from typing import NoReturn
 from datetime import datetime
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from pathlib import Path
@@ -52,7 +53,7 @@ class OmnixLogger(logging.Logger):
         exception_type: type[Exception],
         log_level: int = logging.ERROR,
         include_traceback: bool = True,
-    ) -> None:
+    ) -> NoReturn:
         """
         Log an error and raise an exception.
         """
@@ -66,7 +67,7 @@ class OmnixLogger(logging.Logger):
         self,
         condition: bool,
         message: str,
-        exception_type: type[Exception] = AssertionError,
+        exception_type: type[Exception] = ValueError,
         log_level: int = logging.ERROR,
     ) -> None:
         """
