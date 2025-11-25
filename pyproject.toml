@@ -41,8 +41,6 @@ dependencies = [
     "jupyter",
     "anywidget",
     "dash",
-    "PyQt6>=6.7.0",
-    "PyQt6-WebEngine>=6.7.0",
     "prefect>=3.2.9",
     "langchain>=0.3.20",
     "langgraph>=0.3.18",
@@ -51,12 +49,18 @@ dependencies = [
     "langchain-openai",
     "langchain-anthropic",
     "langchain-google-genai",
+    "langchain-google-vertexai",
+    "langchain-google-commmunity",
     "langchain-community",
     "pydantic>=2.10.6",
     "questionary",
 ]
 
 [project.optional-dependencies]
+gui = [
+    "PyQt6>=6.7.0",
+    "PyQt6-WebEngine>=6.7.0",
+]
 dev = [
     "ruff>=0.10.0",
     "mypy>=1.15.0",
