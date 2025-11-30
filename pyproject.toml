@@ -53,7 +53,15 @@ dependencies = [
     "langchain-google-commmunity",
     "langchain-community",
     "pydantic>=2.10.6",
+    "pydantic-settings>=2.0.0",
     "questionary",
+    "fsspec>=2024.0.0",
+    "google-api-python-client",
+    "google-auth-httplib2",
+    "google-auth-oauthlib",
+    "pydata_google_auth",
+    "langgraph-checkpoint-postgres>=2.0.0",
+    "psycopg[binary,pool]>=3.1.0",
 ]
 
 [project.optional-dependencies]
@@ -82,7 +90,7 @@ gui_easy_data = "pyomnix.data_process.easy_gui:gui_easy_data"
 include-package-data = true
 
 [tool.setuptools.package-data]
-pyomnix = ["pltconfig/pan_color.json"]
+pyomnix = ["pltconfig/pan_color.json", "agents/sql/*.sql"]
 
 [tool.ruff]
 line-length = 100

@@ -4,14 +4,20 @@ It allows adding, removing, and retrieving API keys and URLs for various provide
 The configuration is stored in a JSON file and can be manually edited.
 """
 
-import json
 import os
 import threading
-from pathlib import Path
-from typing import Any, Optional
+from functools import lru_cache
+from typing import Any
 
 from langchain.chat_models import init_chat_model
 from langchain.chat_models.base import _ConfigurableModel
+from pydantic import BaseModel, Field, PostgresDsn
+from pydantic_settings import (
+    BaseSettings,
+    JsonConfigSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 from pyomnix.consts import OMNIX_PATH
 from pyomnix.omnix_logger import get_logger
@@ -28,6 +34,119 @@ PROVIDER_ALIASES = {  # use small letters
 }
 
 
+class ProviderConfig(BaseModel):
+    """
+    Configuration for a model provider loaded from JSON.
+
+    JSON format:
+    {
+        "provider_name": {
+            "api_key": "...",       // required
+            "base_url": "...",      // required
+            "provider_kwargs": {}   // optional
+        }
+    }
+    """
+
+    api_key: str = Field(description="The API key for the model provider")
+    base_url: str = Field(description="The base URL for the model provider")
+    provider_kwargs: dict[str, Any] = Field(
+        default_factory=dict, description="Optional keyword arguments for the model provider"
+    )
+
+
+class Settings(BaseSettings):
+    """
+    Application settings loaded from a JSON configuration file.
+
+    The JSON file should be located at {OMNIX_PATH}/api_config.json with format:
+    {
+        "langsmith": {"api_key": "...", "base_url": "..."},
+        "openai": {"api_key": "...", "base_url": "...", "provider_kwargs": {...}},
+        ...
+    }
+
+    For provider configs, "api_key" and "base_url" are required,
+    while "provider_kwargs" is optional.
+    """
+
+    langsmith: ProviderConfig
+    request_appendix: dict[str, str] = Field(default_factory=dict)
+    openai: ProviderConfig
+    google: ProviderConfig
+    vertex: ProviderConfig
+    deepseek: ProviderConfig
+    groq: ProviderConfig
+    zhipu: ProviderConfig
+    aliyun: ProviderConfig
+    volcengine: ProviderConfig
+    siliconflow: ProviderConfig
+    supabase_dsn: PostgresDsn | None = None
+    gdrive_key: str | None = None
+    gdrive_folder_id: str | None = None
+
+    postgres_pool_min_size: int = Field(
+        default=1, description="Minimum number of connections in the async pool"
+    )
+    postgres_pool_max_size: int = Field(
+        default=10, description="Maximum number of connections in the async pool"
+    )
+
+    def validate_cold_storage(self) -> bool:
+        """
+        Check whether cold storage (Google Drive) is properly configured.
+
+        Returns:
+            True when the required credentials are present.
+        """
+        return bool(self.gdrive_key)
+
+    def validate_hot_storage(self) -> bool:
+        """
+        Check whether hot storage (Supabase/PostgreSQL) is properly configured.
+
+        Returns:
+            True when a Supabase/PostgreSQL DSN is available.
+        """
+        return bool(self.supabase_dsn)
+
+    model_config = SettingsConfigDict(
+        json_file=f"{OMNIX_PATH}/api_config.json",
+        json_file_encoding="utf-8",
+        extra="forbid",
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """
+        Customize settings sources to use dynamic JSON config path.
+        Priority (highest to lowest): init_settings > json_config > env > dotenv > secrets
+        """
+        return (
+            init_settings,
+            JsonConfigSettingsSource(settings_cls),
+            env_settings,
+            dotenv_settings,
+            file_secret_settings,
+        )
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """
+    Get cached settings instance.
+    Loads configuration from {OMNIX_PATH}/api_config.json at runtime.
+    """
+    return Settings()  # type: ignore[call-arg]
+
+
 class ModelConfig:
     """
     Class to manage API keys and URLs for different model providers.
@@ -35,7 +154,7 @@ class ModelConfig:
     Implements the Singleton pattern to ensure only one instance exists.
     """
 
-    _instance: Optional["ModelConfig"] = None
+    _instance: "ModelConfig | None" = None
 
     _instance_lock = threading.Lock()
 
@@ -65,27 +184,11 @@ class ModelConfig:
 
         if OMNIX_PATH is None:
             raise ValueError("OMNIX_PATH must be set to use ModelAPI")
-        self.config_json = Path(f"{OMNIX_PATH}/api_config.json")
-        self.config: dict[str, dict[str, Any]] = {}
-        self._load_config()
+        self.settings = get_settings()
         if tracing:
             self.setup_langsmith()
         self._initialized = True
         self.model_factories: dict[str, _ConfigurableModel] = {}
-
-    def _load_config(self) -> None:
-        """Load the configuration from the JSON file if it exists."""
-        if self.config_json.exists():
-            with open(self.config_json, encoding="utf-8") as f:
-                self.config = json.load(f)
-        else:
-            logger.info(
-                "No config file found at %s. Initialize empty configuration.",
-                self.config_json,
-            )
-            self.config = {}
-            with open(self.config_json, "w", encoding="utf-8") as f:
-                json.dump(self.config, f, indent=4)
 
     def setup_langsmith(self):
         """
@@ -105,7 +208,8 @@ class ModelConfig:
     def extract_provider_model(full_name: str) -> tuple[str, str]:
         """
         Get the provider and api name from the full name.
-        The format is "provider-api", where "api" is actually the model api used instead of the specific model.
+        The format is "provider-api", where "api" is actually the model api used
+        instead of the specific model.
         (deepseek/google_genai/google_vertexai/openai/anthropic)
         """
         provider_model = full_name.split("-")
@@ -115,7 +219,7 @@ class ModelConfig:
             provider = provider_model[0]
             api_name = provider
         else:
-            logger.raise_error(f"Invalid model full name: {full_name}", ValueError)
+            raise ValueError(f"Invalid model full name: {full_name}")
         return provider, api_name
 
     def setup_model_factory(self, factory_fullname: str | list[str] = "deepseek", **user_kwargs):
@@ -182,81 +286,38 @@ class ModelConfig:
         return initialized
         ##TODO: add interface for local models
 
-    def save_config(self) -> None:
-        """Save the current configuration to the JSON file."""
-        with open(self.config_json, "w", encoding="utf-8") as f:
-            json.dump(self.config, f, indent=4)
-
-    def set_api_config(self, provider: str, *, api_key: str | None, base_url: str | None) -> None:
-        """
-        Set/Add the API key and URL for a specific provider.
-
-        Args:
-            provider: The model provider (e.g., 'openai', 'google', 'anthropic')
-            api_key: The API key to set
-            base_url: The API URL to set
-        """
-        if provider not in self.config:
-            self.config[provider] = {}
-        if api_key is not None:
-            self.config[provider]["api_key"] = api_key
-        if base_url is not None:
-            self.config[provider]["base_url"] = base_url
-        self.save_config()
-
     def get_api_config(self, provider: str) -> tuple[str, str, dict[str, Any]]:
         """
-        Get the API key for a specific provider.
+        Get the API configuration for a specific provider.
 
         Args:
-            provider: The model provider (e.g., 'openai', 'google', 'anthropic')
+            provider: The model provider (e.g., 'openai', 'google', 'deepseek')
 
         Returns:
-            The API key if found, None otherwise
+            A tuple of (api_key, base_url, provider_kwargs)
+
+        Raises:
+            ValueError: If the provider is not found in configuration
         """
-        provider_cfg: dict[str, str] | None = self.config.get(provider)
+        provider_cfg: ProviderConfig | None = getattr(self.settings, provider, None)
         if provider_cfg is None:
             logger.raise_error(f"Provider {provider} not found in configuration", ValueError)  # type: ignore[return-value]
 
-        api_key = provider_cfg.pop("api_key")
-        base_url = provider_cfg.pop("base_url")
-        provoder_kwargs = provider_cfg
-        return api_key, base_url, provoder_kwargs
+        return provider_cfg.api_key, provider_cfg.base_url, provider_cfg.provider_kwargs
 
     def list_providers(self) -> list[str]:
         """
         List all configured providers.
 
         Returns:
-            List of provider names
+            List of provider names that have ProviderConfig
         """
-        return list(self.config.keys())
-
-    def check_provider_models(self, provider: str) -> list[str]:
-        """
-        Check the models supported by a specific provider.
-        """
-        if provider in self.config and "models" in self.config[provider]:
-            return self.config[provider]["models"]
-        return []
-
-    def remove_provider(self, provider: str) -> bool:
-        """
-        Remove a provider from the configuration.
-
-        Args:
-            provider: The model provider to remove
-
-        Returns:
-            True if provider was removed, False if it didn't exist
-        """
-        if provider in self.config:
-            del self.config[provider]
-            self.save_config()
-            logger.info("Provider %s removed from configuration.", provider)
-            return True
-        logger.warning("Provider %s not found in configuration.", provider)
-        return False
+        providers = []
+        for field_name in self.settings.model_fields.keys():
+            field_value = getattr(self.settings, field_name, None)
+            if isinstance(field_value, ProviderConfig):
+                providers.append(field_name)
+        return providers
 
 
 # class ChatMessages(ChatMessagesRaw):
