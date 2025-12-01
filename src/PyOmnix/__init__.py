@@ -1,5 +1,12 @@
+import asyncio
+import sys
+
 # judge if the special path exists in environment variables
 # the special path is used to store private data, won't affect most usages
+
+# Fix for Psycopg on Windows which requires SelectorEventLoop
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from pyomnix import utils
 from pyomnix.consts import LOG_FILE_PATH, OMNIX_PATH, set_paths

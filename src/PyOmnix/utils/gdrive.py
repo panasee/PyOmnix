@@ -12,6 +12,10 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from pyomnix.omnix_logger import get_logger
+
+logger = get_logger(__name__)
+
 scope_dict = {
     "full_control": "https://www.googleapis.com/auth/drive",
     "read_only": "https://www.googleapis.com/auth/drive.readonly",
@@ -408,7 +412,14 @@ class GoogleDriveFile(AbstractBufferedFile):
         req = self.fs.files._http.request
         head, body = req(self.location, method="PUT", body=data, headers=head)
         status = int(head["status"])
-        assert status < 400, "Init upload failed"
+        if status >= 400:
+            logger.error("Init upload failed, HTTP Status: %s", status)
+            try:
+                error_details = json.loads(body.decode("utf-8"))
+                logger.error("Error details: %s", json.dumps(error_details, indent=2))
+            except json.JSONDecodeError:
+                logger.error("Error details: %s", body.decode("utf-8"))
+            raise OSError(f"Init upload failed, HTTP Status: {status}")
         if status in [200, 201]:
             # server thinks we are finished - this should happen
             # only when closing

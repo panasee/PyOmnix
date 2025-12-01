@@ -7,11 +7,12 @@ The configuration is stored in a JSON file and can be manually edited.
 import os
 import threading
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from langchain.chat_models import init_chat_model
 from langchain.chat_models.base import _ConfigurableModel
-from pydantic import BaseModel, Field, PostgresDsn
+from pydantic import BaseModel, Field, PostgresDsn, field_validator
 from pydantic_settings import (
     BaseSettings,
     JsonConfigSettingsSource,
@@ -82,7 +83,8 @@ class Settings(BaseSettings):
     volcengine: ProviderConfig
     siliconflow: ProviderConfig
     supabase_dsn: PostgresDsn | None = None
-    gdrive_key: str | None = None
+    supabase_ssl_cert: Path | None = None
+    gdrive_key: dict[str, Any] | None = None
     gdrive_folder_id: str | None = None
 
     postgres_pool_min_size: int = Field(
@@ -92,23 +94,15 @@ class Settings(BaseSettings):
         default=10, description="Maximum number of connections in the async pool"
     )
 
-    def validate_cold_storage(self) -> bool:
+    @field_validator("supabase_ssl_cert", mode="before")
+    @classmethod
+    def validate_supabase_ssl_cert(cls, v: Path | str | None) -> Path | None:
         """
-        Check whether cold storage (Google Drive) is properly configured.
-
-        Returns:
-            True when the required credentials are present.
+        Validate the Supabase SSL certificate path.
         """
-        return bool(self.gdrive_key)
-
-    def validate_hot_storage(self) -> bool:
-        """
-        Check whether hot storage (Supabase/PostgreSQL) is properly configured.
-
-        Returns:
-            True when a Supabase/PostgreSQL DSN is available.
-        """
-        return bool(self.supabase_dsn)
+        if v is None:
+            return None
+        return (OMNIX_PATH / Path(v)).expanduser()
 
     model_config = SettingsConfigDict(
         json_file=f"{OMNIX_PATH}/api_config.json",

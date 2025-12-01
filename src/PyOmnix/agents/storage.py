@@ -23,37 +23,54 @@ Usage:
 """
 
 import asyncio
-import importlib
-import json
 import mimetypes
-import os
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
-from pyomnix.agents.models import Settings, get_settings
+from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.checkpoint.postgres.aio import Conn as PostgresConn
+from psycopg import conninfo as psycopg_conninfo
+from psycopg_pool import AsyncConnectionPool
+
+from pyomnix.agents.models_settings import Settings, get_settings
 from pyomnix.omnix_logger import get_logger
 from pyomnix.utils.gdrive import GoogleDriveFileSystem
 
-_postgres_module: Any
-try:  # pragma: no cover - optional dependency
-    _postgres_module = importlib.import_module("langgraph.checkpoint.postgres")
-except ImportError:  # pragma: no cover
-    AsyncPostgresSaver = None  # type: ignore[assignment]
-    PostgresSaver = None  # type: ignore[assignment]
-else:
-    AsyncPostgresSaver = _postgres_module.AsyncPostgresSaver  # type: ignore[attr-defined]
-    PostgresSaver = _postgres_module.PostgresSaver  # type: ignore[attr-defined]
-
-try:  # pragma: no cover - optional dependency
-    _psycopg_pool = importlib.import_module("psycopg_pool")
-except ImportError:  # pragma: no cover
-    AsyncConnectionPool = None  # type: ignore[assignment]
-else:
-    AsyncConnectionPool = _psycopg_pool.AsyncConnectionPool  # type: ignore[attr-defined]
-
 logger = get_logger(__name__)
+
+
+def _resolve_supabase_ssl_cert(settings: Settings) -> Path | None:
+    """
+    Determine the SSL certificate path for Supabase connections, if available.
+    """
+    if settings.supabase_ssl_cert:
+        cert_path = settings.supabase_ssl_cert
+        if not cert_path.exists():
+            logger.raise_error(
+                f"Supabase SSL certificate not found at {cert_path}",
+                FileNotFoundError,
+            )
+        return cert_path
+
+
+def _build_supabase_conninfo(settings: Settings) -> str:
+    """
+    Construct the Supabase connection string with SSL parameters if available.
+    """
+    base_conninfo = str(settings.supabase_dsn)
+    cert_path = _resolve_supabase_ssl_cert(settings)
+    if cert_path is None:
+        return base_conninfo
+
+    logger.debug("Using Supabase SSL certificate at %s", cert_path)
+    return psycopg_conninfo.make_conninfo(
+        base_conninfo,
+        sslmode="verify-full",
+        sslrootcert=str(cert_path),
+    )
 
 
 # ===============================================================
@@ -90,7 +107,7 @@ class DriveManager:
         self.settings = settings or get_settings()
         self.folder_id = folder_id or self.settings.gdrive_folder_id or "root"
         self._initialized = False
-        self._service_account: dict[str, Any] | None = None
+        self._gdrive_key: dict[str, Any] | None = None
         self._fs_cache: dict[str, GoogleDriveFileSystem] = {}
         self._drive_files_resource: Any | None = None
 
@@ -105,13 +122,7 @@ class DriveManager:
             logger.debug("DriveManager already initialized, skipping.")
             return
 
-        if not self.settings.validate_cold_storage():
-            logger.raise_error(
-                "GDRIVE_KEY is not configured. Update api_config.json or env vars.",
-                ValueError,
-            )
-
-        self._ensure_service_account_loaded()
+        self._ensure_gdrive_key_loaded()
         await asyncio.to_thread(self._get_fs, self.folder_id)
         self._initialized = True
         logger.info("DriveManager initialized successfully with service account.")
@@ -124,34 +135,18 @@ class DriveManager:
                 RuntimeError,
             )
 
-    def _ensure_service_account_loaded(self) -> None:
+    def _ensure_gdrive_key_loaded(self) -> None:
         """Load and cache the service account credentials."""
-        if self._service_account is not None:
+        if self._gdrive_key is not None:
             return
 
         key_data = self.settings.gdrive_key
-        if not key_data:
+        if key_data is None:
             logger.raise_error(
                 "GDRIVE_KEY is not configured. Update api_config.json or env vars.",
                 ValueError,
             )
-
-        expanded = Path(os.path.expandvars(key_data)).expanduser()
-        if expanded.is_file():
-            raw_json = expanded.read_text(encoding="utf-8")
-        else:
-            raw_json = key_data
-
-        try:
-            self._service_account = json.loads(raw_json)
-        except json.JSONDecodeError as exc:  # pragma: no cover - configuration error
-            logger.raise_error(
-                (
-                    "GDRIVE_KEY must be either a JSON string or a path to a valid "
-                    f"service account JSON file. Details: {exc}"
-                ),
-                ValueError,
-            )
+        self._gdrive_key = key_data
 
     def _resolve_target_folder(self, folder_id: str | None) -> str:
         """Resolve the folder that should act as the root for the operation."""
@@ -166,13 +161,22 @@ class DriveManager:
         if fs is not None:
             return fs
 
-        if self._service_account is None:
-            self._ensure_service_account_loaded()
+        if self._gdrive_key is None:
+            self._ensure_gdrive_key_loaded()
+
+        assert self._gdrive_key is not None
+
+        if "type" in self._gdrive_key.keys() and self._gdrive_key["type"] == "service_account":
+            token_type = "service_account"
+            creds = self._gdrive_key
+        else:
+            token_type = "browser"
+            creds = None
 
         fs = GoogleDriveFileSystem(
-            token="service_account",
+            token=token_type,
             root_file_id=target_folder,
-            creds=self._service_account,
+            creds=creds,
         )
         self._fs_cache[target_folder] = fs
         if self._drive_files_resource is None:
@@ -484,12 +488,6 @@ async def get_checkpointer(
     """
     settings = settings or get_settings()
 
-    if not settings.validate_hot_storage():
-        logger.raise_error(
-            "SUPABASE_DSN is not configured. Set it in environment or .env file.",
-            ValueError,
-        )
-
     if AsyncPostgresSaver is None or AsyncConnectionPool is None:  # pragma: no cover
         logger.raise_error(
             "Required packages not installed. Install with: "
@@ -497,9 +495,9 @@ async def get_checkpointer(
             ImportError,
         )
 
-    conninfo = str(settings.supabase_dsn)
+    conninfo = _build_supabase_conninfo(settings)
 
-    pool = AsyncConnectionPool(
+    pool: PostgresConn = AsyncConnectionPool(
         conninfo=conninfo,
         min_size=settings.postgres_pool_min_size,
         max_size=settings.postgres_pool_max_size,
@@ -561,19 +559,13 @@ def get_sync_checkpointer(settings: Settings | None = None) -> Any:
     """
     settings = settings or get_settings()
 
-    if not settings.validate_hot_storage():
-        logger.raise_error(
-            "SUPABASE_DSN is not configured. Set it in environment or .env file.",
-            ValueError,
-        )
-
     if PostgresSaver is None:  # pragma: no cover
         logger.raise_error(
             "langgraph-checkpoint-postgres is required for synchronous checkpoints.",
             ImportError,
         )
 
-    return PostgresSaver.from_conn_string(str(settings.supabase_dsn))
+    return PostgresSaver.from_conn_string(_build_supabase_conninfo(settings))
 
 
 __all__ = [
@@ -583,3 +575,23 @@ __all__ = [
     "get_sync_checkpointer",
     "setup_checkpoint_tables",
 ]
+
+
+if __name__ == "__main__":
+
+    async def _demo() -> None:
+        """
+        Demonstrate how to combine Google Drive cold storage with Supabase cache.
+        """
+        storage = StorageCoordinator()
+
+        logger.info("Uploading demo artifact to Google Drive cold storage...")
+        metadata = await storage.store_cold_memory(b"hello, cold storage!", "storage-demo.txt")
+        logger.info("Uploaded artifact info: %s", metadata)
+
+        logger.info("Activating Supabase runtime cache...")
+        await storage.activate_hot_cache()
+        cache = storage.runtime_cache()
+        logger.info("Runtime cache ready: %s", cache)
+        await storage.release_hot_cache()
+    asyncio.run(_demo())
