@@ -50,7 +50,7 @@ dependencies = [
     "langchain-anthropic",
     "langchain-google-genai",
     "langchain-google-vertexai",
-    "langchain-google-commmunity",
+    "langchain-google-community",
     "langchain-community",
     "pydantic>=2.10.6",
     "pydantic-settings>=2.0.0",

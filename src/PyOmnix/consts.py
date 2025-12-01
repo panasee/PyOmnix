@@ -6,7 +6,7 @@ Constants for the PyOmnix project.
 import os
 from pathlib import Path
 
-from .omnix_logger import get_logger
+from pyomnix.omnix_logger import get_logger
 
 logger = get_logger(__name__)
 # Path
@@ -65,3 +65,10 @@ def set_paths(*, omnix_path: Path | str | None = None) -> None:
         logger.info("( *・ω・) read from OMNIX_PATH:%s", os.getenv("OMNIX_PATH"))
         OMNIX_PATH = Path(os.getenv("OMNIX_PATH"))
         LOG_FILE_PATH = OMNIX_PATH / "logs"
+
+if __name__ == "__main__":
+    set_paths(omnix_path="test")
+    print(OMNIX_PATH)
+    print(LOG_FILE_PATH)
+    print(os.getenv("OMNIX_PATH"))
+    print(os.getenv("PYLAB_DB_LOCAL"))
