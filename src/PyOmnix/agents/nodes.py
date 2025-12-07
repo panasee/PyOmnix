@@ -1,73 +1,163 @@
-from langchain_core.messages import SystemMessage, RemoveMessage
-from langchain_core.runnables import RunnableConfig
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+"""
+Nodes for LangGraph agent workflows.
 
-from pyomnix.agents.states import ConversationState
+This module provides node functions for building LangGraph agents including:
+- agent_node: Main agent node that invokes the LLM with messages
+- tools_node: Tool execution node using LangGraph's prebuilt ToolNode
+- call_model: General chat node with conversation summary support
+- summarize_conversation: Summarization node for long conversations
+"""
 
-def call_model(model, state: ConversationState, config: RunnableConfig):
+from typing import Any, cast
+
+from langchain.chat_models.base import _ConfigurableModel
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import Runnable, RunnableConfig
+from langgraph.graph.message import RemoveMessage
+from langgraph.prebuilt import ToolNode
+
+from pyomnix.agents.prompts import PROMPTS
+from pyomnix.agents.runnables import create_chat_chain, empty_string_placeholder
+from pyomnix.agents.schemas import ConversationState
+from pyomnix.agents.tools import handle_tool_error
+from pyomnix.omnix_logger import get_logger
+
+logger = get_logger(__name__)
+
+
+def create_chat_node(chain: Runnable):
     """
-    general chat node: support chat with summary of previous conversation
+    Create an agent node function with the model bound to tools.
+
     Args:
-        model: BaseChatModel | _ConfigurableModel
-        state: ConversationState
-        config: RunnableConfig
-    Returns:
-        dict[str, Any]
+        chain: The LCEL chain to use for the agent.
     """
-    
-    summary = state.get("summary", "")
-    
-    if summary:
-        system_message = f"Previous conversation summary: {summary}"
-        messages = [SystemMessage(content=system_message)] + state["messages"]
-    else:
-        messages = state["messages"]
-        
-    response = model.invoke(messages)
-    return {"messages": [response]}
 
-def summarize_conversation(model, state: ConversationState, config: RunnableConfig):
+    async def chat_node(state: ConversationState, config: RunnableConfig) -> dict[str, Any]:
+        response = await chain.ainvoke(state, config)
+        return {"messages": [response]}
+
+    return chat_node
+
+
+def create_tools_node(tools: list | None = None) -> ToolNode:
     """
-    Summarize the conversation.
+    Create a tools node using LangGraph's prebuilt ToolNode.
+
     Args:
-        model: BaseChatModel | _ConfigurableModel
-        state: ConversationState
-        config: RunnableConfig
+        tools: List of tools to include in the node. Defaults to DEFAULT_TOOLS.
+
     Returns:
-        dict[str, Any]
+        ToolNode: A prebuilt tool execution node.
     """
-    summary = state.get("summary", "")
-    messages = state["messages"]
-    if summary:
-        summary_message = (
-            f"Current conversation summary: {summary}\n\n"
-            "Please merge the summary with the new conversation content and update it to a new summary."
-            "【Important instructions】Please keep the summary language consistent with the main language of the conversation content."
-            "If the conversation is in English, use English summary, if the conversation is in Chinese, use Chinese summary, if the conversation is mixed, judge it yourself."
+    tools = tools or []
+    return ToolNode(tools, handle_tool_errors=handle_tool_error)
+
+
+def create_summarize_node(
+    model: BaseChatModel | _ConfigurableModel,
+    temperature: float = 0.3,
+    summary_max_length: int = 1000,
+):
+    """
+    Factory function to create a summarize node.
+
+    Args:
+        model: BaseChatModel or _ConfigurableModel
+        temperature: Temperature for the model
+        summary_max_length(tokens): Maximum length of the summary
+    """
+    try:
+        model = model.with_config(temperature=temperature)
+    except:
+        logger.warning("Failed to set temperature for the model")
+    try:
+        model = model.with_config(max_tokens=summary_max_length)
+    except:
+        logger.warning("Failed to set summary_max_length for the model")
+
+    model = cast(BaseChatModel, model)
+
+    async def summarize_node(state: ConversationState, config: RunnableConfig) -> dict[str, Any]:
+        messages_to_summarize = state["messages"][:-2]  # keep the last 2 messages
+        delete_messages = [RemoveMessage(id=m.id) for m in messages_to_summarize]
+        if not messages_to_summarize:
+            return {"summary": empty_string_placeholder("summary")}
+
+        if state.get("summary") != empty_string_placeholder("summary"):
+            system_prompt = PROMPTS.get("summary_update")
+        else:
+            system_prompt = PROMPTS.get("summary")
+
+        summary_chain = create_chat_chain(model, system_prompt=system_prompt) | StrOutputParser()
+        response = await summary_chain.ainvoke(
+            {
+                "messages": messages_to_summarize,
+                "summary": state.get("summary", empty_string_placeholder("summary")),
+                "user_profile": state.get("user_profile", empty_string_placeholder("user profile")),
+                "structured_memory": state.get(
+                    "structured_memory", empty_string_placeholder("structured memory")
+                ),
+                "current_intent": state.get(
+                    "current_intent", empty_string_placeholder("current intent")
+                ),
+            },
+            config,
         )
-    else:
-        summary_message = (
-            "Please summarize the following conversation content into a concise paragraph."
-            "【Important instructions】Please keep the summary language consistent with the main language of the conversation content."
-        )
-    messages_to_summarize = messages[:-2] # keep the last 2 messages
-    if not messages_to_summarize:
-            return {}
+        return {"summary": response, "messages": delete_messages}
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", summary_message),
-        MessagesPlaceholder(variable_name="history"),
-        ("user", "Start summarizing now.")
-    ])
-    
-    chain = prompt | model
-    response = chain.invoke({"history": messages_to_summarize})
-    new_summary = response.content
+    return summarize_node
 
-    # remove old messages
-    delete_messages = [RemoveMessage(id=m.id) for m in messages_to_summarize if m.id]
 
-    return {
-        "summary": new_summary, 
-        "messages": delete_messages 
-    }
+# TODO: reserved for future customization
+# def custom_tools_execution_node(state: ConversationState):
+#    """
+#    Tool execution node implemented by the underlying mechanism.
+#    Not using the prebuilt node, manually handle the tool call loop.
+#    """
+#    messages = state["messages"]
+#    last_message = messages[-1]
+#
+#    # 1. Check if there are actual tool calls
+#    if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
+#        # Theoretically, this should be controlled by the Conditional Edge of the Graph
+#        # But here is defensive programming
+#        return {"messages": []}
+#
+#    # 2. Get tool mapping (usually from global or Config)
+#    # Assume tools_map is { "tool_name": tool_instance }
+#    # Here is for demonstration, assume you already have tools_map
+#    # tools_map = {t.name: t for t in tools}
+#
+#    results = []
+#
+#    # 3. Iterate and execute tools (LangGraph allows multiple tool_calls in one output)
+#    for tool_call in last_message.tool_calls:
+#        tool_name = tool_call["name"]
+#        tool_args = tool_call["args"]
+#        tool_call_id = tool_call["id"]
+#
+#        try:
+#            # --- pre-execution hook (e.g. log) ---
+#            print(f"Executing {tool_name} with {tool_args}...")
+#
+#            # --- Execute tool ---
+#            ##TODO: call the tool function directly
+#            tool_instance = tools_map[tool_name]
+#            response = tool_instance.invoke(tool_args)
+#
+#        except Exception as e:
+#            # Custom error handling
+#            response_content = handle_tool_error(e)
+#
+#        # 4. Build ToolMessage
+#        # This is the standard format that LLM can understand "tool execution completed"
+#        tool_message = ToolMessage(
+#            tool_call_id=tool_call_id,
+#            content=response_content,
+#            name=tool_name
+#        )
+#        results.append(tool_message)
+#
+#    return {"messages": results}

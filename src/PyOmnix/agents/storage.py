@@ -32,7 +32,9 @@ from typing import Any, BinaryIO, cast
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.postgres.aio import Conn as PostgresConn
+from psycopg import AsyncConnection
 from psycopg import conninfo as psycopg_conninfo
+from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from pyomnix.agents.models_settings import Settings, get_settings
@@ -513,7 +515,13 @@ async def get_checkpointer(
         )
 
         checkpointer = AsyncPostgresSaver(pool)
-        await checkpointer.setup()
+
+        # Run setup with a separate autocommit connection since
+        # CREATE INDEX CONCURRENTLY cannot run inside a transaction block
+        setup_conn = await AsyncConnection.connect(conninfo, autocommit=True)
+        setup_conn.row_factory = dict_row  # type: ignore[assignment]
+        async with setup_conn:
+            await AsyncPostgresSaver(setup_conn).setup()  # type: ignore[arg-type]
         logger.info("PostgreSQL checkpointer initialized and tables verified.")
 
         yield checkpointer
