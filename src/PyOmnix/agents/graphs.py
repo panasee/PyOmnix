@@ -6,35 +6,104 @@ This module provides factory functions for building various agent graphs:
 - build_tool_agent_graph: Agent graph with tool calling capability
 """
 
-import asyncio
-from functools import partial
+import uuid
+from typing import Any
 
 from langchain.chat_models.base import _ConfigurableModel
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
-from pyomnix.agents.edges import should_summarize_edge, tools_condition
-from pyomnix.agents.models_settings import ModelConfig
-from pyomnix.agents.nodes import (
-    create_agent_node,
-    create_tools_node,
-    summarize_conversation,
-)
-from pyomnix.agents.tools import TEST_TOOLS
-
-DEFAULT_TOOLS = TEST_TOOLS
-from pyomnix.agents.schemas import ConversationState
-from pyomnix.agents.storage import get_checkpointer
+from pyomnix.agents.edges import should_summarize_edge
+from pyomnix.agents.nodes import create_chat_node, create_summarize_node
+from pyomnix.agents.runnables import create_chat_chain
+from pyomnix.agents.schemas import ConversationState, GraphContext
 from pyomnix.omnix_logger import get_logger
 
 logger = get_logger(__name__)
 
 
-# =============================================================================
-# Chat Graph (with Summarization)
-# =============================================================================
+class GraphSession:
+    """
+    GraphSession is a wrapper for the graph, it can be used to run the graph and get the history.
+    Args:
+        graph: the compiled graph to wrap
+        thread_id: the thread id to use for the graph
+        config_dict: the config to update the graph with, should be a dict, with configurable key
+    Returns:
+        GraphSession: the GraphSession object
+    """
+
+    def __init__(
+        self,
+        graph: CompiledStateGraph[Any, Any, Any, Any],
+        thread_id: str | None = None,
+        config_dict: dict[str, Any] | None = None,
+    ):
+        self.graph = graph
+        # if not thread_id, generate a UUID
+        self.thread_id = thread_id or str(uuid.uuid4())
+        self.configurable: dict = {"thread_id": self.thread_id}
+        self.other_config: dict = {}
+        if config_dict:
+            self.config = config_dict
+
+    @property
+    def config(self) -> RunnableConfig:
+        """get the config"""
+        return RunnableConfig(configurable=self.configurable, **self.other_config)
+
+    @config.setter
+    def config(self, value: dict[str, Any]):
+        """set the config"""
+        if "configurable" in value:
+            new_configurable = value.pop("configurable")
+            if isinstance(new_configurable, dict):
+                if "thread_id" in new_configurable:
+                    logger.warning(
+                        "thread_id detected, please set thread_id by contructing a new instance"
+                    )
+                    del new_configurable["thread_id"]
+                self.configurable.update(**new_configurable)
+            else:
+                raise ValueError("configurable value must be a dict")
+        self.other_config.update(value)
+
+    def update_config(self, **updates: Any):
+        """update the config"""
+        self.config = updates
+
+    async def ainvoke(self, input_data: Any):
+        """wrap invoke, update config if needed, here config_updates must be a dict, for clarity"""
+        return await self.graph.ainvoke(input_data, config=self.config)
+
+    def astream(self, input_data: Any):
+        """wrap astream"""
+        return self.graph.astream(input_data, config=self.config)
+
+    async def get_history(self):
+        """wrap aget_state"""
+        snapshot = await self.get_state()
+        return snapshot.values.get("messages", [])
+
+    async def get_state(self):
+        """wrap aget_state"""
+        return await self.graph.aget_state(self.config)
+
+    async def update_state(self, values: dict, as_node: str):
+        """wrap aupdate_state"""
+        return await self.graph.aupdate_state(self.config, values, as_node=as_node)
+
+
+def update_dict(old_dict: dict[str, Any], new_dict: dict[str, Any]) -> dict[str, Any]:
+    """
+    Mechanism: Patch update instead of overwrite.
+    Similar to Python's dict.update().
+    """
+    if not old_dict:
+        return new_dict
+    return {**old_dict, **new_dict}
 
 
 def build_chat_graph(model: BaseChatModel | _ConfigurableModel):
@@ -47,195 +116,27 @@ def build_chat_graph(model: BaseChatModel | _ConfigurableModel):
     Returns:
         Compiled StateGraph with memory checkpointer.
     """
-    bound_call_model = partial(call_model, model)
-    bound_summarize = partial(summarize_conversation, model)
+    chat_chain = create_chat_chain(model)
+    chat_node = create_chat_node(chat_chain)
+    summarize_node = create_summarize_node(model)
 
     # Build graph
-    workflow = StateGraph(ConversationState)
+    workflow = StateGraph(ConversationState, GraphContext)
 
-    workflow.add_node("conversation", bound_call_model)
-    workflow.add_node("summarize_conversation", bound_summarize)
+    workflow.add_node("conversation", chat_node)
+    workflow.add_node("summarize", summarize_node)
 
     workflow.set_entry_point("conversation")
 
     workflow.add_conditional_edges(
         "conversation",
         should_summarize_edge,
-    )
-
-    workflow.add_edge("summarize_conversation", END)
-
-    memory = MemorySaver()
-
-    return workflow.compile(checkpointer=memory)
-
-
-# =============================================================================
-# Tool Agent Graph
-# =============================================================================
-
-
-def build_tool_agent_graph(
-    model: BaseChatModel | _ConfigurableModel,
-    tools: list | None = None,
-) -> StateGraph:
-    """
-    Build a StateGraph for a tool-calling agent.
-
-    This creates an uncompiled graph. Use compile_tool_agent_graph() or
-    compile_tool_agent_graph_async() to compile with a checkpointer.
-
-    Args:
-        model: The chat model to use.
-        tools: List of tools to bind to the agent. Defaults to DEFAULT_TOOLS.
-
-    Returns:
-        StateGraph: The uncompiled workflow graph.
-    """
-    tools = tools or DEFAULT_TOOLS
-
-    # Create nodes
-    agent_node = create_agent_node(model, tools)
-    tools_node = create_tools_node(tools)
-
-    # Initialize StateGraph
-    workflow = StateGraph(ConversationState)
-
-    # Add nodes
-    workflow.add_node("agent", agent_node)
-    workflow.add_node("tools", tools_node)
-
-    # Set entry point
-    workflow.set_entry_point("agent")
-
-    # Add edges
-    workflow.add_edge("tools", "agent")  # After tool runs, go back to agent
-
-    # Conditional edge: from "agent", decide to go to "tools" or END
-    workflow.add_conditional_edges(
-        "agent",
-        tools_condition,
         {
-            "tools": "tools",
-            END: END,
+            "summarize": "summarize",
+            "no_summarize": END,
         },
     )
 
+    workflow.add_edge("summarize", END)
+
     return workflow
-
-
-def compile_tool_agent_graph_sync(
-    model: BaseChatModel | _ConfigurableModel,
-    tools: list | None = None,
-):
-    """
-    Build and compile a tool agent graph with in-memory checkpointer.
-
-    For development/testing. Use async version with PostgreSQL for production.
-
-    Args:
-        model: The chat model to use.
-        tools: List of tools to bind to the agent.
-
-    Returns:
-        Compiled graph with MemorySaver checkpointer.
-    """
-    workflow = build_tool_agent_graph(model, tools)
-    memory = MemorySaver()
-    return workflow.compile(checkpointer=memory)
-
-
-async def compile_tool_agent_graph_async(
-    model: BaseChatModel | _ConfigurableModel,
-    tools: list | None = None,
-):
-    """
-    Build and compile a tool agent graph with async PostgreSQL checkpointer.
-
-    This function returns an async context manager that yields the compiled graph.
-
-    Args:
-        model: The chat model to use.
-        tools: List of tools to bind to the agent.
-
-    Yields:
-        Compiled graph with AsyncPostgresSaver checkpointer.
-
-    Usage:
-        async with compile_tool_agent_graph_async(model) as graph:
-            result = await graph.ainvoke(state, config)
-    """
-    workflow = build_tool_agent_graph(model, tools)
-
-    async with get_checkpointer() as checkpointer:
-        compiled_graph = workflow.compile(checkpointer=checkpointer)
-        yield compiled_graph
-
-
-# =============================================================================
-# Main Execution Block
-# =============================================================================
-
-
-async def run_tool_agent_demo():
-    """
-    Run a simple demo of the tool-calling agent.
-
-    This function demonstrates the agent's ability to:
-    1. Receive a user message
-    2. Detect that a tool is needed
-    3. Call the get_current_time tool
-    4. Return the final answer
-    """
-    # Setup model using ModelConfig
-    model_factory = ModelConfig()
-    models = model_factory.setup_model_factory("deepseek")
-    model = models["deepseek"].with_config(model="deepseek-chat", temperature=0.7)
-
-    logger.info("Starting tool agent demo...")
-
-    # Build the graph
-    workflow = build_tool_agent_graph(model)
-
-    # Use async checkpointer for production-ready persistence
-    async with get_checkpointer() as checkpointer:
-        graph = workflow.compile(checkpointer=checkpointer)
-
-        # Create config with thread_id for conversation persistence
-        config: RunnableConfig = {
-            "configurable": {
-                "thread_id": "test_thread_1",
-            }
-        }
-
-        # Input message
-        input_state: dict = {
-            "messages": [{"role": "user", "content": "What time is it?"}],
-            "topic": "",
-            "runtime_context": "",
-            "user_profile": "",
-            "private_memories": {},
-            "canvas_title": "",
-            "canvas_content": "",
-            "canvas_language": "",
-            "is_canvas_active": False,
-        }
-
-        logger.info("Sending message: 'What time is it?'")
-
-        # Stream the output
-        async for event in graph.astream(input_state, config=config):  # type: ignore[arg-type]
-            for node_name, node_output in event.items():
-                logger.info("Node '%s' output:", node_name)
-                if "messages" in node_output:
-                    for msg in node_output["messages"]:
-                        if hasattr(msg, "content"):
-                            logger.info("  Content: %s", msg.content)
-                        if hasattr(msg, "tool_calls") and msg.tool_calls:
-                            logger.info("  Tool calls: %s", msg.tool_calls)
-
-        logger.info("Demo completed successfully!")
-
-
-if __name__ == "__main__":
-    asyncio.run(run_tool_agent_demo())

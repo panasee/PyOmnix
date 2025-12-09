@@ -27,6 +27,7 @@ Available Factories:
 import json
 from typing import Any, cast
 
+from langchain.chat_models.base import _ConfigurableModel
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import Runnable, RunnableLambda
@@ -87,7 +88,7 @@ def map_conversation_state_to_input(state: ConversationState | dict[str, Any]) -
 
 
 def create_chat_chain(
-    llm: BaseChatModel,
+    llm: BaseChatModel | _ConfigurableModel,
     system_prompt: str = PROMPTS.get("default"),
     tools: list | None = None,
 ) -> Runnable:

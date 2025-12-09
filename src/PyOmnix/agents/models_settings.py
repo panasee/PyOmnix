@@ -82,6 +82,8 @@ class Settings(BaseSettings):
     aliyun: ProviderConfig
     volcengine: ProviderConfig
     siliconflow: ProviderConfig
+
+    sqlite_db_path: Path | None = None
     supabase_dsn: PostgresDsn | None = None
     supabase_ssl_cert: Path | None = None
     gdrive_key: dict[str, Any] | None = None
@@ -93,6 +95,16 @@ class Settings(BaseSettings):
     postgres_pool_max_size: int = Field(
         default=10, description="Maximum number of connections in the async pool"
     )
+
+    @field_validator("sqlite_db_path", mode="before")
+    @classmethod
+    def validate_sqlite_db_path(cls, v: Path | str | None) -> Path | None:
+        """
+        Validate the SQLite database path.
+        """
+        if v is None:
+            return None
+        return (OMNIX_PATH / Path(v)).expanduser()
 
     @field_validator("supabase_ssl_cert", mode="before")
     @classmethod

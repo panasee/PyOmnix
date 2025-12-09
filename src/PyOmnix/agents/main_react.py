@@ -15,73 +15,19 @@ Usage:
 """
 
 import asyncio
-import uuid
 from typing import Any
 
 from langchain_core.messages import HumanMessage
-from langchain_core.runnables import RunnableConfig
-from langgraph.graph import END, StateGraph
 
-from pyomnix.agents.edges import should_tools_edge
+from pyomnix.agents.graphs import GraphSession, build_chat_graph
 from pyomnix.agents.models_settings import ModelConfig
-from pyomnix.agents.nodes import create_chat_node, create_tools_node
-from pyomnix.agents.schemas import ConversationState, GraphContext
 from pyomnix.agents.storage import get_checkpointer
-from pyomnix.agents.tools import dummy_weather_tool
 from pyomnix.omnix_logger import get_logger
 
 logger = get_logger(__name__)
 # Thread ID for conversation persistence
 # Use a fixed ID to test memory persistence across runs
 PERSISTENT_THREAD_ID = "react-demo-thread-001"
-
-
-# ============================================================================
-# Graph Building
-# ============================================================================
-
-
-def build_react_graph(model):
-    """
-    Build a minimal ReAct graph: Agent <-> Tools.
-
-    The graph structure:
-        [START] -> chat -> (tools_condition) -> tools -> chat -> ... -> [END]
-
-    Args:
-        model: The chat model with tools bound.
-
-    Returns:
-        StateGraph: The uncompiled workflow graph.
-    """
-    # Create nodes
-    chat_node = create_chat_node(model)
-    tools_node = create_tools_node([dummy_weather_tool])
-
-    # Initialize StateGraph with minimal state
-    workflow = StateGraph(state_schema=ConversationState, context_schema=GraphContext)
-
-    # Add nodes
-    workflow.add_node("chat", chat_node)
-    workflow.add_node("tools", tools_node)
-
-    # Set entry point
-    workflow.set_entry_point("chat")
-
-    # Add edges: tools -> chat (loop back)
-    workflow.add_edge("tools", "chat")
-
-    # Conditional edge: chat -> tools OR END
-    workflow.add_conditional_edges(
-        "chat",
-        should_tools_edge,
-        {
-            "tools": "tools",
-            "no_tools": END,
-        },
-    )
-
-    return workflow
 
 
 def create_initial_state(user_message: str) -> dict[str, Any]:
@@ -118,7 +64,7 @@ def create_continuation_state(user_message: str) -> dict[str, Any]:
     }
 
 
-async def run_react_agent():
+async def run_react_agent(thread_id: str, summary_threshold: int = 10):
     """
     Run the ReAct agent with interactive conversation and persistence.
 
@@ -136,23 +82,21 @@ async def run_react_agent():
 
     # Build graph
     logger.info("Building ReAct graph...")
-    workflow = build_react_graph(model)
+    workflow = build_chat_graph(model)
 
     # Use PostgreSQL checkpointer for persistence
     logger.info("Connecting to PostgreSQL for persistence...")
     async with get_checkpointer() as checkpointer:
         # Compile graph with checkpointer
         graph = workflow.compile(checkpointer=checkpointer)
-
-        # Config with persistent thread_id
-        config: RunnableConfig = {
-            "configurable": {
-                "thread_id": PERSISTENT_THREAD_ID,
-            }
-        }
+        graph_session = GraphSession(
+            graph,
+            thread_id=thread_id,
+            config_dict={"configurable": {"max_history_messages": summary_threshold}},
+        )
 
         # Check if we have existing conversation history
-        existing_state = await graph.aget_state(config)
+        existing_state = await graph_session.get_state()
         if existing_state.values and existing_state.values.get("messages"):
             msg_count = len(existing_state.values["messages"])
             logger.info(
@@ -195,13 +139,6 @@ async def run_react_agent():
                 logger.info("Conversation ended by user. State persisted.")
                 break
 
-            if user_input.lower() == "clear":
-                # Create new thread_id to start fresh
-                new_thread_id = f"react-demo-{uuid.uuid4().hex[:8]}"
-                config["configurable"]["thread_id"] = new_thread_id
-                print(f"\n🧹 Started new conversation thread: {new_thread_id}")
-                continue
-
             # Create state for new message
             input_state = create_continuation_state(user_input)
 
@@ -209,68 +146,22 @@ async def run_react_agent():
 
             # Stream the response
             try:
-                async for event in graph.astream(input_state, config=config):
+                async for event in graph_session.astream(input_state):
                     for node_name, node_output in event.items():
-                        if node_name == "agent" and "messages" in node_output:
-                            for msg in node_output["messages"]:
-                                # Check for tool calls
-                                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                                    tool_names = [tc["name"] for tc in msg.tool_calls]
-                                    print(f"\n   🔧 Calling tools: {tool_names}")
-                                # Print final content
-                                elif hasattr(msg, "content") and msg.content:
-                                    print(msg.content)
-                        elif node_name == "tools" and "messages" in node_output:
-                            for msg in node_output["messages"]:
-                                tool_result = msg.content if hasattr(msg, "content") else str(msg)
-                                if len(tool_result) > 100:
-                                    tool_result = tool_result[:100] + "..."
-                                print(f"   📋 Tool result: {tool_result}")
+                        print(f"=====Node: {node_name}======")
+                        for msg in node_output["messages"]:
+                            # Check for tool calls
+                            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                                tool_names = [tc["name"] for tc in msg.tool_calls]
+                                print(f"\n   🔧 Calling tools: {tool_names}")
+                            # Print final content
+                            elif hasattr(msg, "content") and msg.content:
+                                print(f"   📋Result: {msg.content}")
 
             except Exception as e:
                 logger.error("Error during agent execution: %s", e)
                 print(f"\n❌ Error: {e}")
                 continue
-
-
-async def run_single_query(query: str):
-    """
-    Run a single query through the ReAct agent (for testing).
-
-    Args:
-        query: The query to send to the agent.
-    """
-    # Setup model
-    model_factory = ModelConfig()
-    models = model_factory.setup_model_factory("deepseek")
-    model = models["deepseek"].with_config(model="deepseek-chat", temperature=0.7)
-
-    # Build and compile graph
-    workflow = build_react_graph(model)
-
-    async with get_checkpointer() as checkpointer:
-        graph = workflow.compile(checkpointer=checkpointer)
-
-        config: RunnableConfig = {
-            "configurable": {
-                "thread_id": f"test-{uuid.uuid4().hex[:8]}",
-            }
-        }
-
-        input_state = create_initial_state(query)
-
-        print(f"\n📤 Query: {query}")
-        print("-" * 40)
-
-        async for event in graph.astream(input_state, config=config):
-            for node_name, node_output in event.items():
-                print(f"[{node_name}]")
-                if "messages" in node_output:
-                    for msg in node_output["messages"]:
-                        if hasattr(msg, "tool_calls") and msg.tool_calls:
-                            print(f"  Tool calls: {msg.tool_calls}")
-                        if hasattr(msg, "content") and msg.content:
-                            print(f"  Content: {msg.content}")
 
 
 # ============================================================================

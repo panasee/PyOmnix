@@ -27,11 +27,12 @@ import mimetypes
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import Any, BinaryIO, cast, Literal
 
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.postgres.aio import Conn as PostgresConn
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from psycopg import AsyncConnection
 from psycopg import conninfo as psycopg_conninfo
 from psycopg.rows import dict_row
@@ -466,6 +467,7 @@ class StorageCoordinator:
 @asynccontextmanager
 async def get_checkpointer(
     settings: Settings | None = None,
+    sql_type: Literal["supabase", "sqlite"] = "supabase",
 ) -> AsyncGenerator[Any, None]:
     """
     Get an async PostgreSQL checkpointer for LangGraph.
@@ -490,45 +492,63 @@ async def get_checkpointer(
     """
     settings = settings or get_settings()
 
-    if AsyncPostgresSaver is None or AsyncConnectionPool is None:  # pragma: no cover
-        logger.raise_error(
-            "Required packages not installed. Install with: "
-            "pip install 'psycopg[binary,pool]' langgraph-checkpoint-postgres",
-            ImportError,
+    if sql_type == "supabase":
+        if AsyncPostgresSaver is None or AsyncConnectionPool is None:  # pragma: no cover
+            logger.raise_error(
+                "Required packages not installed. Install with: "
+                "pip install 'psycopg[binary,pool]' langgraph-checkpoint-postgres",
+                ImportError,
+            )
+
+        conninfo = _build_supabase_conninfo(settings)
+
+        pool: PostgresConn = AsyncConnectionPool(
+            conninfo=conninfo,
+            min_size=settings.postgres_pool_min_size,
+            max_size=settings.postgres_pool_max_size,
+            open=False,  # Don't open immediately
         )
 
-    conninfo = _build_supabase_conninfo(settings)
+        try:
+            await pool.open(wait=True)
+            logger.debug(
+                "Opened connection pool with %d-%d connections.",
+                settings.postgres_pool_min_size,
+                settings.postgres_pool_max_size,
+            )
 
-    pool: PostgresConn = AsyncConnectionPool(
-        conninfo=conninfo,
-        min_size=settings.postgres_pool_min_size,
-        max_size=settings.postgres_pool_max_size,
-        open=False,  # Don't open immediately
-    )
+            checkpointer = AsyncPostgresSaver(pool)
 
-    try:
-        await pool.open(wait=True)
-        logger.debug(
-            "Opened connection pool with %d-%d connections.",
-            settings.postgres_pool_min_size,
-            settings.postgres_pool_max_size,
-        )
+            # Run setup with a separate autocommit connection since
+            # CREATE INDEX CONCURRENTLY cannot run inside a transaction block
+            setup_conn = await AsyncConnection.connect(conninfo, autocommit=True)
+            setup_conn.row_factory = dict_row  # type: ignore[assignment]
+            async with setup_conn:
+                await AsyncPostgresSaver(setup_conn).setup()  # type: ignore[arg-type]
+            logger.info("PostgreSQL checkpointer initialized and tables verified.")
 
-        checkpointer = AsyncPostgresSaver(pool)
+            yield checkpointer
 
-        # Run setup with a separate autocommit connection since
-        # CREATE INDEX CONCURRENTLY cannot run inside a transaction block
-        setup_conn = await AsyncConnection.connect(conninfo, autocommit=True)
-        setup_conn.row_factory = dict_row  # type: ignore[assignment]
-        async with setup_conn:
-            await AsyncPostgresSaver(setup_conn).setup()  # type: ignore[arg-type]
-        logger.info("PostgreSQL checkpointer initialized and tables verified.")
-
-        yield checkpointer
-
-    finally:
-        await pool.close()
-        logger.debug("Closed connection pool.")
+        finally:
+            await pool.close()
+            logger.debug("Closed connection pool.")
+    else:
+        if AsyncSqliteSaver is None:  # pragma: no cover
+            logger.raise_error(
+                "AsyncSqliteSaver not available. Install langgraph-checkpoint-sqlite.",
+                ImportError,
+            )
+        db_path = settings.sqlite_db_path
+        if db_path is None:
+            logger.raise_error(
+                "SQLite database path is not configured. Update api_config.json or env vars.",
+                ValueError,
+            )
+        async with AsyncSqliteSaver.from_conn_string(str(db_path)) as checkpointer:
+            await checkpointer.setup()
+            logger.info("SQLite checkpointer initialized at %s.", db_path)
+            yield checkpointer
+        logger.debug("SQLite checkpointer closed.")
 
 
 async def setup_checkpoint_tables(settings: Settings | None = None) -> None:

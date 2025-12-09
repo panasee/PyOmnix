@@ -17,9 +17,7 @@ from pyomnix.omnix_logger import get_logger
 logger = get_logger(__name__)
 
 
-def should_tools_edge(
-    state: ConversationState
-) -> Literal["tools", "no_tools"]:
+def should_tools_edge(state: ConversationState) -> Literal["tools", "no_tools"]:
     """
     Determine if tools are needed based on the last message.
     """

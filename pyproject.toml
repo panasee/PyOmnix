@@ -61,6 +61,7 @@ dependencies = [
     "google-auth-oauthlib",
     "pydata_google_auth",
     "langgraph-checkpoint-postgres>=2.0.0",
+    "langgraph-checkpoint-sqlite>=3.0.0",
     "psycopg[binary,pool]>=3.1.0",
 ]
 
