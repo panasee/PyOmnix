@@ -30,25 +30,6 @@ logger = get_logger(__name__)
 PERSISTENT_THREAD_ID = "react-demo-thread-001"
 
 
-def create_initial_state(user_message: str) -> dict[str, Any]:
-    """
-    Create an initial state for the conversation.
-
-    Args:
-        user_message: The user's input message.
-
-    Returns:
-        dict: Initial state with the user message.
-    """
-    return {
-        "messages": [HumanMessage(content=user_message)],
-        "topic": "",
-        "runtime_context": "",
-        "user_profile": "",
-        "private_memories": {},
-    }
-
-
 def create_continuation_state(user_message: str) -> dict[str, Any]:
     """
     Create a state for continuing an existing conversation.
@@ -78,7 +59,7 @@ async def run_react_agent(thread_id: str, summary_threshold: int = 10):
     logger.info("Initializing model...")
     model_factory = ModelConfig()
     models = model_factory.setup_model_factory("deepseek")
-    model = models["deepseek"].with_config(model="deepseek-chat", temperature=0.7)
+    model = models["deepseek"].with_config(llm_model="deepseek-chat", llm_temperature=0.7)
 
     # Build graph
     logger.info("Building ReAct graph...")
@@ -170,8 +151,11 @@ async def run_react_agent(thread_id: str, summary_threshold: int = 10):
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("🚀 Minimal ReAct Loop with PostgreSQL Persistence")
-    print("=" * 60)
-
-    asyncio.run(run_react_agent())
+    model_factory = ModelConfig()
+    model_factory.setup_langsmith()
+    models = model_factory.setup_model_factory("deepseek")
+    model = models["deepseek"].with_config(llm_model="deepseek-chat", llm_temperature=0.7)
+    workflow = build_chat_graph(model)
+    graph = workflow.compile()
+    graph_session = GraphSession(graph, thread_id="test_react_agent", config_dict={"configurable": {"max_history_messages": 3}})
+    print(asyncio.run(graph_session.ainvoke({"messages": [HumanMessage(content="Give me your brief model specification")]})))

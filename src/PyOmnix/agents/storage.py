@@ -27,8 +27,9 @@ import mimetypes
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from typing import Any, BinaryIO, cast, Literal
+from typing import Any, BinaryIO, Literal, cast
 
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.postgres.aio import Conn as PostgresConn
@@ -466,8 +467,8 @@ class StorageCoordinator:
 
 @asynccontextmanager
 async def get_checkpointer(
+    sql_type: Literal["supabase", "sqlite", "memory"] = "supabase",
     settings: Settings | None = None,
-    sql_type: Literal["supabase", "sqlite"] = "supabase",
 ) -> AsyncGenerator[Any, None]:
     """
     Get an async PostgreSQL checkpointer for LangGraph.
@@ -532,6 +533,11 @@ async def get_checkpointer(
         finally:
             await pool.close()
             logger.debug("Closed connection pool.")
+    elif sql_type == "memory":
+        checkpointer = MemorySaver()
+        logger.info("In-memory checkpointer initialized.")
+        yield checkpointer
+        logger.debug("In-memory checkpointer closed.")
     else:
         if AsyncSqliteSaver is None:  # pragma: no cover
             logger.raise_error(
@@ -622,4 +628,5 @@ if __name__ == "__main__":
         cache = storage.runtime_cache()
         logger.info("Runtime cache ready: %s", cache)
         await storage.release_hot_cache()
+
     asyncio.run(_demo())

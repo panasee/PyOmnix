@@ -9,7 +9,6 @@ This module provides node functions for building LangGraph agents including:
 """
 
 from typing import Any, cast
-
 from langchain.chat_models.base import _ConfigurableModel
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
@@ -25,7 +24,6 @@ from pyomnix.omnix_logger import get_logger
 
 logger = get_logger(__name__)
 
-
 def create_chat_node(chain: Runnable):
     """
     Create an agent node function with the model bound to tools.
@@ -35,7 +33,7 @@ def create_chat_node(chain: Runnable):
     """
 
     async def chat_node(state: ConversationState, config: RunnableConfig) -> dict[str, Any]:
-        response = await chain.ainvoke(state, config)
+        response = await chain.ainvoke(state, config=config)
         return {"messages": [response]}
 
     return chat_node
@@ -62,6 +60,7 @@ def create_summarize_node(
 ):
     """
     Factory function to create a summarize node.
+    note the config of summary_node is not the same as the config of other nodes, so we need to specify alone.
 
     Args:
         model: BaseChatModel or _ConfigurableModel
@@ -103,7 +102,7 @@ def create_summarize_node(
                     "current_intent", empty_string_placeholder("current intent")
                 ),
             },
-            config,
+            config=filter_config(config),
         )
         return {"summary": response, "messages": delete_messages}
 

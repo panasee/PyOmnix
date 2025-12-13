@@ -7,6 +7,16 @@ from typing import Annotated, Any, TypedDict
 from langgraph.graph.message import MessagesState
 
 
+def update_dict(old_dict: dict[str, Any], new_dict: dict[str, Any]) -> dict[str, Any]:
+    """
+    Mechanism: Patch update instead of overwrite.
+    Similar to Python's dict.update().
+    """
+    if not old_dict:
+        return new_dict
+    return {**old_dict, **new_dict}
+
+
 class GraphContext(TypedDict):
     """
     Settings and Context for the graph.

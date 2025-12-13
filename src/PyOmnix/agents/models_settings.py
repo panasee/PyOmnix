@@ -180,7 +180,7 @@ class ModelConfig:
                     cls._instance._initialized = False
         return cls._instance  # type: ignore[return-value]
 
-    def __init__(self, tracing: bool = False):
+    def __init__(self, tracing: bool = True):
         """
         Initialize the ModelAPIConfig with the default config file path.
         This will only run once for the singleton instance.
@@ -196,7 +196,7 @@ class ModelConfig:
         self._initialized = True
         self.model_factories: dict[str, _ConfigurableModel] = {}
 
-    def setup_langsmith(self):
+    def setup_langsmith(self, full_sample: bool = False):
         """
         Setup LangSmith for tracing and monitoring.
         """
@@ -209,6 +209,10 @@ class ModelConfig:
         os.environ["LANGSMITH_ENDPOINT"] = base_url
         os.environ["LANGSMITH_API_KEY"] = api_key
         os.environ["LANGSMITH_PROJECT"] = "pyomnix"
+        if full_sample:
+            os.environ["LANGCHAIN_TRACING_SAMPLE_RATE"] = "1.0"
+        else:
+            os.environ["LANGCHAIN_TRACING_SAMPLE_RATE"] = "0.1"
 
     @staticmethod
     def extract_provider_model(full_name: str) -> tuple[str, str]:
@@ -270,6 +274,7 @@ class ModelConfig:
                 model_factory = init_chat_model(
                     model_provider=provider,
                     configurable_fields="any",
+                    config_prefix="llm",
                     api_key=api_key,
                     base_url=base_url,
                     **total_kwargs,
@@ -278,6 +283,7 @@ class ModelConfig:
                 model_factory = init_chat_model(
                     model_provider=api_name,
                     configurable_fields="any",
+                    config_prefix="llm",
                     api_key=api_key,
                     **total_kwargs,
                 )

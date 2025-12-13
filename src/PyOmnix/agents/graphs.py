@@ -6,7 +6,6 @@ This module provides factory functions for building various agent graphs:
 - build_tool_agent_graph: Agent graph with tool calling capability
 """
 
-import uuid
 from typing import Any
 
 from langchain.chat_models.base import _ConfigurableModel
@@ -14,6 +13,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langsmith import uuid7
 
 from pyomnix.agents.edges import should_summarize_edge
 from pyomnix.agents.nodes import create_chat_node, create_summarize_node
@@ -43,7 +43,7 @@ class GraphSession:
     ):
         self.graph = graph
         # if not thread_id, generate a UUID
-        self.thread_id = thread_id or str(uuid.uuid4())
+        self.thread_id = thread_id or str(uuid7())
         self.configurable: dict = {"thread_id": self.thread_id}
         self.other_config: dict = {}
         if config_dict:
@@ -94,16 +94,6 @@ class GraphSession:
     async def update_state(self, values: dict, as_node: str):
         """wrap aupdate_state"""
         return await self.graph.aupdate_state(self.config, values, as_node=as_node)
-
-
-def update_dict(old_dict: dict[str, Any], new_dict: dict[str, Any]) -> dict[str, Any]:
-    """
-    Mechanism: Patch update instead of overwrite.
-    Similar to Python's dict.update().
-    """
-    if not old_dict:
-        return new_dict
-    return {**old_dict, **new_dict}
 
 
 def build_chat_graph(model: BaseChatModel | _ConfigurableModel):
