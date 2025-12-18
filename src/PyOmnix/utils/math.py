@@ -1,10 +1,13 @@
+from __future__ import annotations
+
 import re
 from collections.abc import Generator, Sequence
 from datetime import datetime
-from typing import Literal
+from typing import Literal, TYPE_CHECKING, Any
 
 import numpy as np
-import pandas as pd
+if TYPE_CHECKING:
+    import pandas as pd
 
 # define constants
 CM_TO_INCH = 0.3937
