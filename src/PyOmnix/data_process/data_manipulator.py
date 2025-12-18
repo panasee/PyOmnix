@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from __future__ import annotations
 """
 This module is responsible for processing and plotting the data
 and creating a Plotly figure for Dash embedding.
@@ -20,21 +21,19 @@ import time
 from collections.abc import Sequence
 from importlib import resources
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TYPE_CHECKING, Any
 
-from dash import Dash, dcc, html
-from dash.dependencies import Input, Output
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
-from matplotlib.axes import Axes
-from matplotlib.colors import Colormap
-from matplotlib.figure import Figure
-from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
-from plotly.subplots import make_subplots
-from waitress import create_server
+if TYPE_CHECKING:
+    from dash import Dash
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    import plotly.graph_objects as go
+    from matplotlib.axes import Axes
+    from matplotlib.colors import Colormap
+    from matplotlib.figure import Figure
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
 
 from ..omnix_logger import get_logger
 from ..utils import (
@@ -160,6 +159,7 @@ class DataManipulator:
         - label_in: the label of the data
         - **kwargs: keyword arguments for pd.read_csv (sep, skiprow, header, float_precision, ...), shared by all files
         """
+        import pandas as pd
         if not isinstance(data_in, tuple | list):
             logger.validate(
                 not isinstance(label_in, tuple | list) or label_in is None,
@@ -218,6 +218,8 @@ class DataManipulator:
         Returns:
             None if no data is found, or a list of DataFrames (even if only one df found)
         """
+        import numpy as np
+        import pandas as pd
         dfs = None
         if loc is not None:
             if isinstance(loc, int):
@@ -320,9 +322,9 @@ class DataManipulator:
 
     def plot_mapping(
         self,
-        mapping_x: any,
-        mapping_y: any,
-        mapping_val: any,
+        mapping_x: Any,
+        mapping_y: Any,
+        mapping_val: Any,
         *,
         data_df: pd.DataFrame | None = None,
         loc: tuple[int, ...] | int | None = None,
@@ -343,6 +345,7 @@ class DataManipulator:
         - ax: the axes to plot the figure
         - cmap: the colormap to use
         """
+        import numpy as np
         if data_df is None:
             data_df = self.get_datas(loc=loc, label=label, concat=True)
 
@@ -361,6 +364,7 @@ class DataManipulator:
         """
         plot the spherical background
         """
+        import numpy as np
         # create the spherical grid
         u = np.linspace(0, 2 * np.pi, n_meridians)
         v = np.linspace(0, np.pi, n_parallels)
@@ -431,6 +435,9 @@ class DataManipulator:
         Returns:
             tuple: The figure and axes objects
         """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
         fig = plt.figure(figsize=(12, 10))
         ax = fig.add_subplot(111, projection="3d")
 
@@ -640,6 +647,7 @@ class DataManipulator:
         - lines_per_fig: the number of lines per figure (used for appointing params)
         - **kwargs: keyword arguments for the plt.subplots function
         """
+        import matplotlib.pyplot as plt
         fig, ax = plt.subplots(
             n_row,
             n_col,
@@ -676,6 +684,7 @@ class DataManipulator:
         for advanced users who want to customize the figure more
         more kwargs can be passed to the make_subplots function
         """
+        from plotly.subplots import make_subplots
         if titles is None:
             titles = [["" for _ in range(n_cols)] for _ in range(n_rows)]
         flat_titles = [item for sublist in titles for item in sublist]
@@ -740,6 +749,12 @@ class DataManipulator:
         """
         update the figure for dash
         """
+        from dash import Dash, dcc, html
+        from dash.dependencies import Input, Output
+        import plotly.graph_objects as go
+        from waitress import create_server
+        logging.getLogger("waitress").setLevel(logging.ERROR)
+
         if not self._dash_app:
             app = Dash(f"live_plot_{port}")
             self._dash_app = app
@@ -874,6 +889,9 @@ class DataManipulator:
         - marker_toggle_threshold: above this point count, switch to mode="lines" (no markers)
         - disable_hover_threshold: above this point count, set hoverinfo="skip" to reduce hover cost
         """
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+
         if plot_types is None:
             plot_types = [["scatter" for _ in range(n_cols)] for _ in range(n_rows)]
         self.plot_types = plot_types
@@ -1110,6 +1128,9 @@ class DataManipulator:
         - with_str: whether there are strings (mainly for time string) in data. There will be no order for string data,
                    the string data will just be plotted evenly spaced
         """
+        import numpy as np
+        import pandas as pd
+
         if not incremental and max_points is not None:
             logger.warning("max_points will be ignored when incremental is False")
 
@@ -1254,6 +1275,9 @@ class DataManipulator:
         This function filters out NaNs in the dataframe,
         in most cases, it just works like a direct separation of columns
         """
+        import numpy as np
+        import pandas as pd
+
         if candledf is None or candledf.empty:
             logger.warning("Empty candlestick dataframe provided; skipping update")
             return None
@@ -1370,6 +1394,8 @@ class DataManipulator:
         rgb_mat.append(extra)
         if not data_extract:
             if row is None and col is None:
+                import matplotlib.pyplot as plt
+                import numpy as np
                 DataManipulator.load_settings(False, False)
                 fig, ax, _ = DataManipulator.init_canvas(1, 1, 20, 20)
                 ax.imshow(rgb_mat)
@@ -1499,6 +1525,7 @@ class DataManipulator:
         """
         preview the colors in the list
         """
+        import matplotlib.pyplot as plt
         DataManipulator.load_settings(False, False)
         fig, ax, _ = DataManipulator.init_canvas(1, 1, 13, 7)
         try:

@@ -1,11 +1,15 @@
+from __future__ import annotations
+
 import colorsys
 import copy
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.colors import LinearSegmentedColormap
-from PIL import Image, ImageDraw, ImageFont
+if TYPE_CHECKING:
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from matplotlib.colors import LinearSegmentedColormap
+    from PIL import Image, ImageDraw, ImageFont
 
 from ..omnix_logger import get_logger
 from ..pltconfig import color_preset as colors
@@ -68,6 +72,7 @@ def print_progress_bar(
         fill (str): bar fill character
         print_end (str): end character (e.g. "\r", "\r\n")
     """
+    import numpy as np
     if np.sign(iteration) == np.sign(total):
         percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
         filled_length = int(length * iteration // total)
@@ -109,6 +114,8 @@ def truncate_cmap(cmap, min_val: float = 0.0, max_val: float = 1.0, n: int = 256
         n : int
             the number of colors in the colormap
     """
+    import numpy as np
+    from matplotlib.colors import LinearSegmentedColormap
     new_cmap = LinearSegmentedColormap.from_list(
         f"trunc({cmap.name},{min_val:.2f},{max_val:.2f})",
         cmap(np.linspace(min_val, max_val, n)),
@@ -140,6 +147,10 @@ def hsv_analyze(
         colors_lst : list
             the list of colors for each point
     """
+    import numpy as np
+    from PIL import Image
+    import matplotlib.pyplot as plt
+
     if isinstance(image, Path | str):
         image = Image.open(image)
     hsv_image = image.convert("HSV")
@@ -188,6 +199,8 @@ def combine_cmap(cmap_lst: list, segment: int = 128):
         segment : int
             the number of segments in each colormap
     """
+    import numpy as np
+    from matplotlib.colors import LinearSegmentedColormap
     c_lst = []
     for cmap in cmap_lst:
         c_lst.extend(cmap(np.linspace(0, 1, segment)))
@@ -211,6 +224,7 @@ def add_watermark(input_image_path, output_image_path, watermark_text,
         font_path (str): Path to font file, uses system font by default
         text_color (tuple): Text color (R,G,B), default white (255,255,255)
     """
+    from PIL import Image, ImageDraw, ImageFont
     try:
         # Open original image
         original_image = Image.open(input_image_path).convert("RGBA")
