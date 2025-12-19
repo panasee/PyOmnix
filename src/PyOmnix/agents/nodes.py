@@ -9,8 +9,10 @@ This module provides node functions for building LangGraph agents including:
 """
 
 from typing import Any, cast
+
 from langchain.chat_models.base import _ConfigurableModel
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
 from langgraph.graph.message import RemoveMessage
@@ -23,6 +25,7 @@ from pyomnix.agents.tools import handle_tool_error
 from pyomnix.omnix_logger import get_logger
 
 logger = get_logger(__name__)
+
 
 def create_chat_node(chain: Runnable):
     """
@@ -37,6 +40,23 @@ def create_chat_node(chain: Runnable):
         return {"messages": [response]}
 
     return chat_node
+
+
+def create_named_chat_node(node_name: str, chain: Runnable):
+    """
+    Create a debater node function with the model bound to tools.
+
+    Args:
+        node_name: The name of the node.
+        chain: The LCEL chain to use for the debater.
+    """
+
+    async def debater_node(state: ConversationState, config: RunnableConfig) -> dict[str, Any]:
+        response = await chain.ainvoke(state, config=config)
+        labeled_message = AIMessage(content=response.content, name=node_name)
+        return {"messages": [labeled_message]}
+
+    return debater_node
 
 
 def create_tools_node(tools: list | None = None) -> ToolNode:
@@ -102,7 +122,7 @@ def create_summarize_node(
                     "current_intent", empty_string_placeholder("current intent")
                 ),
             },
-            config=filter_config(config),
+            config=config,
         )
         return {"summary": response, "messages": delete_messages}
 

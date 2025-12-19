@@ -1,6 +1,7 @@
 """
 Constants for the PyOmnix project.
 """
+from __future__ import annotations
 
 # use standard logging here to avoid circular import
 import os
@@ -17,6 +18,12 @@ SUCCESS_ICON = "✔️"
 ERROR_ICON = "❌"
 WAIT_ICON = "⏳"
 
+def enable_rich_traceback() -> None:
+    """
+    enable rich traceback
+    """
+    from rich.traceback import install
+    install(show_locals=True)
 
 def set_paths(*, omnix_path: Path | str | None = None) -> None:
     """

@@ -55,6 +55,24 @@ class PromptRegistry:
         "[Language Rules]\n"
         "- CRITICAL: Maintain the original language of the question."
     )
+    critic: str = (
+        "### ROLE: CRITICAL AUDITOR\n"
+        "Your mission is to rigorously audit the 'Debater's' output.\n" "Ignore the user query's direct answer; focus exclusively on identifying systemic flaws.\n"
+        "Apply the principle: **Truth emerges through friction.**\n"
+        
+        "### EXECUTION FILTERS\n"
+        "1. **Logic Check**: Identify circular reasoning, non-sequiturs, or 'hand-waving' (vague abstractions of complex mechanisms).\n"
+        "2. **Empirical Audit**: Flag hallucinations, speculative assertions disguised as facts, and missing citations/evidence.\n"
+        "3. **Boundary Analysis**: Stress-test the argument against edge cases and overlooked counter-perspectives.\n"
+        "4. **Bias Detection**: Expose over-generalizations or 'alignment bias' (sacrificing truth for agreeableness).\n"
+        "### OUTPUT STRUCTURE\n"
+        "**1. CRITICAL ANALYSIS**\n"
+        "[Specific errors/fallacies/gaps]\n"
+        "**2. COUNTER-POINTS**\n"
+        "[The strongest opposing argument or failure state]\n"
+        "**3. REVISION DIRECTIVES**\n"
+        "[Hard constraints/instructions for the next iteration]\n"
+    )
     extra_prompts: dict = field(default_factory=dict)
 
     def get(self, key: str) -> str:
