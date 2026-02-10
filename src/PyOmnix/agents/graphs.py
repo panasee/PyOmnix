@@ -6,16 +6,19 @@ This module provides factory functions for building various agent graphs:
 - build_tool_agent_graph: Agent graph with tool calling capability
 """
 
+import json as _json
+from datetime import datetime
 from functools import wraps
-from typing import Any, Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from langchain.chat_models.base import _ConfigurableModel
+if TYPE_CHECKING:
+    from pyomnix.agents.storage import DriveManager
+
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessageChunk, BaseMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Command, Interrupt, interrupt
 from langsmith import uuid7
 from rich import box
 from rich.console import Console
@@ -27,6 +30,7 @@ from rich.table import Table
 from pyomnix.agents.edges import should_summarize_edge
 from pyomnix.agents.nodes import (
     create_chat_node,
+    create_human_review_node,
     create_named_chat_node,
     create_summarize_node,
 )
@@ -36,6 +40,29 @@ from pyomnix.agents.schemas import ConversationState, GraphContext
 from pyomnix.omnix_logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _extract_text_content(msg) -> str:
+    """Extract text content from a message using standard content_blocks if available.
+
+    Falls back to raw ``msg.content`` for messages that lack the v1 property.
+    """
+    if hasattr(msg, "content_blocks"):
+        parts: list[str] = []
+        for block in msg.content_blocks:
+            block_type = block.get("type", "")
+            if block_type == "text":
+                parts.append(block.get("text", ""))
+            elif block_type == "reasoning":
+                parts.append(f"[thinking] {block.get('reasoning', '')}")
+        if parts:
+            return "\n".join(parts)
+
+    # Fallback for pre-v1 or simple string content
+    content = msg.content
+    if isinstance(content, str):
+        return content
+    return str(content)
 
 
 def rich_format_history(func):
@@ -63,9 +90,7 @@ def rich_format_history(func):
                 if name:
                     role_display = f"{role_display} ({name})"
 
-                content = msg.content
-                if not isinstance(content, str):
-                    content = str(content)
+                content = _extract_text_content(msg)
 
                 # Assign colors based on role
                 color = "cyan"
@@ -145,9 +170,9 @@ class GraphSession:
         """wrap invoke, update config if needed, here config_updates must be a dict, for clarity"""
         return await self.graph.ainvoke(input_data, config=self.config)
 
-    def astream(self, input_data: Any):
-        """wrap astream"""
-        return self.graph.astream(input_data, config=self.config)
+    def astream(self, input_data: Any, *, stream_mode: str = "updates"):  # type: ignore[arg-type]
+        """wrap astream with configurable stream_mode"""
+        return self.graph.astream(input_data, config=self.config, stream_mode=stream_mode)  # type: ignore[arg-type]
 
     @rich_format_history
     async def get_history(self):
@@ -163,69 +188,285 @@ class GraphSession:
         """wrap aupdate_state"""
         return await self.graph.aupdate_state(self.config, values, as_node=as_node)
 
+    async def inspect_state(self) -> None:
+        """Pretty-print the full StateSnapshot for debugging.
+
+        Shows: current state values, which node runs next, pending tasks/interrupts,
+        checkpoint metadata, and step number.
+        """
+        snapshot = await self.get_state()
+        console = Console()
+
+        # --- Header ---
+        console.print(
+            Panel(
+                f"[bold]Thread:[/bold] {self.thread_id}",
+                title="[bold blue]State Inspector[/bold blue]",
+                border_style="blue",
+            )
+        )
+
+        # --- Next nodes ---
+        next_nodes = snapshot.next
+        if next_nodes:
+            console.print(f"  [bold cyan]Next node(s):[/bold cyan] {', '.join(next_nodes)}")
+        else:
+            console.print("  [bold cyan]Next node(s):[/bold cyan] [dim](graph finished)[/dim]")
+
+        # --- Metadata ---
+        meta = snapshot.metadata or {}
+        console.print(
+            f"  [bold cyan]Step:[/bold cyan] {meta.get('step', '?')}    "
+            f"[bold cyan]Written by:[/bold cyan] {meta.get('source', '?')}"
+        )
+
+        # --- Pending tasks / interrupts ---
+        if snapshot.tasks:
+            for task in snapshot.tasks:
+                interrupts = getattr(task, "interrupts", None)
+                if interrupts:
+                    for intr in interrupts:
+                        console.print(
+                            Panel(
+                                str(intr.value),
+                                title="[bold red]Pending Interrupt[/bold red]",
+                                border_style="red",
+                            )
+                        )
+                else:
+                    console.print(f"  [dim]Task: {task}[/dim]")
+
+        # --- State values (excluding messages for brevity) ---
+        values = snapshot.values or {}
+        state_table = Table(
+            title="[bold]State Fields[/bold]",
+            box=box.SIMPLE,
+            show_header=True,
+            header_style="bold",
+        )
+        state_table.add_column("Field", style="cyan", width=22)
+        state_table.add_column("Value", style="white")
+
+        for key, val in values.items():
+            if key == "messages":
+                state_table.add_row("messages", f"[dim]{len(val)} message(s)[/dim]")
+            else:
+                display = str(val)
+                if len(display) > 120:
+                    display = display[:120] + "..."
+                state_table.add_row(key, display)
+        console.print(state_table)
+
+        # --- Last 3 messages preview ---
+        messages = values.get("messages", [])
+        if messages:
+            msg_table = Table(
+                title=f"[bold]Messages (last {min(3, len(messages))} of {len(messages)})[/bold]",
+                box=box.ROUNDED,
+                show_header=True,
+                header_style="bold magenta",
+            )
+            msg_table.add_column("Role", width=18)
+            msg_table.add_column("Content (truncated)")
+
+            for msg in messages[-3:]:
+                role = getattr(msg, "type", "?")
+                name = getattr(msg, "name", None)
+                label = f"{role}" + (f" ({name})" if name else "")
+                content = _extract_text_content(msg)
+                if len(content) > 200:
+                    content = content[:200] + "..."
+                msg_table.add_row(label, content)
+            console.print(msg_table)
+
+    async def get_state_history(self, limit: int = 10) -> list:
+        """Get the checkpoint history for this thread (time travel).
+
+        Returns a list of StateSnapshot objects, newest first.
+        Each snapshot represents the state at a specific point in the execution.
+
+        Args:
+            limit: Maximum number of snapshots to return.
+        """
+        history = []
+        async for snapshot in self.graph.aget_state_history(self.config):
+            history.append(snapshot)
+            if len(history) >= limit:
+                break
+        return history
+
+    async def print_state_history(self, limit: int = 10) -> None:
+        """Pretty-print the checkpoint history for debugging.
+
+        Shows step number, which node wrote the checkpoint, next node(s),
+        and message count at each point.
+        """
+        history = await self.get_state_history(limit)
+        console = Console()
+        table = Table(
+            title=f"[bold blue]State History (last {len(history)} checkpoints)[/bold blue]",
+            box=box.ROUNDED,
+            show_header=True,
+            header_style="bold magenta",
+        )
+        table.add_column("#", style="bold", width=5)
+        table.add_column("Step", width=6)
+        table.add_column("Written by", width=16)
+        table.add_column("Next node(s)", width=20)
+        table.add_column("Messages", width=10)
+        table.add_column("Interrupt?", width=10)
+
+        for i, snap in enumerate(history):
+            meta = snap.metadata or {}
+            next_nodes = ", ".join(snap.next) if snap.next else "(end)"
+            msg_count = str(len(snap.values.get("messages", [])))
+            has_interrupt = any(
+                getattr(t, "interrupts", None) for t in (snap.tasks or [])
+            )
+            table.add_row(
+                str(i),
+                str(meta.get("step", "?")),
+                str(meta.get("source", "?")),
+                next_nodes,
+                msg_count,
+                "[red]Yes[/red]" if has_interrupt else "[dim]No[/dim]",
+            )
+        console.print(table)
+
+    async def export_history(
+        self,
+        target: "Path | DriveManager",
+        filename: str | None = None,
+    ) -> dict[str, Any]:
+        """Export the conversation history to a local file or Google Drive.
+
+        Args:
+            target: Either a ``pathlib.Path`` (directory for local save) or a
+                ``DriveManager`` instance (uploads to Google Drive).
+            filename: Optional filename override. Defaults to
+                ``"crosstalk_{thread_id}_{timestamp}.json"``.
+
+        Returns:
+            dict with export metadata:
+              - For local: ``{"path": "<full_path>", "message_count": N}``
+              - For Drive: ``{"file_id": "...", "web_link": "...", ...}``
+        """
+        snapshot = await self.get_state()
+        messages = snapshot.values.get("messages", [])
+
+        # Serialize messages to a list of dicts
+        serialized: list[dict[str, Any]] = []
+        for msg in messages:
+            entry: dict[str, Any] = {
+                "role": getattr(msg, "type", "unknown"),
+                "content": _extract_text_content(msg),
+            }
+            name = getattr(msg, "name", None)
+            if name:
+                entry["name"] = name
+            msg_id = getattr(msg, "id", None)
+            if msg_id:
+                entry["id"] = msg_id
+            serialized.append(entry)
+
+        export_data = {
+            "thread_id": self.thread_id,
+            "exported_at": datetime.now().isoformat(),
+            "message_count": len(serialized),
+            "state_fields": {
+                k: (str(v) if not isinstance(v, (str, int, float, bool, dict, list)) else v)
+                for k, v in snapshot.values.items()
+                if k != "messages"
+            },
+            "messages": serialized,
+        }
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        fname = filename or f"conversation_{self.thread_id}_{ts}.json"
+        json_bytes = _json.dumps(export_data, ensure_ascii=False, indent=2).encode("utf-8")
+
+        # Dispatch based on target type
+        # If target is a string, convert to Path
+        if isinstance(target, str):
+            target = Path(target)
+        if isinstance(target, Path):
+            # Local file export
+            target.mkdir(parents=True, exist_ok=True)
+            file_path = target / fname
+            file_path.write_bytes(json_bytes)
+            logger.info("Exported %d messages to %s", len(serialized), file_path)
+            return {"path": str(file_path), "message_count": len(serialized)}
+        else:
+            # Google Drive export via DriveManager
+            from pyomnix.agents.storage import DriveManager
+
+            if not isinstance(target, DriveManager):
+                raise TypeError(
+                    f"target must be a Path or DriveManager, got {type(target).__name__}"
+                )
+            await target.initialize()
+            metadata = await target.upload_asset(json_bytes, fname)
+            logger.info(
+                "Exported %d messages to Google Drive: %s",
+                len(serialized),
+                metadata.get("web_link", metadata.get("file_id", "?")),
+            )
+            return {**metadata, "message_count": len(serialized)}
+
     async def astream_pretty(self, input_data: Any):
-        """stream the output pretty"""
+        """Stream the output with rich formatting using LangGraph's messages stream mode.
+
+        Uses ``stream_mode="messages"`` for true token-by-token streaming.
+        Each streamed item is a ``(AIMessageChunk, metadata)`` tuple where
+        ``metadata`` contains the originating node name and LLM invocation details.
+        """
         console = Console()
         full_content = ""
         last_node = ""
 
         with Live(console=console, refresh_per_second=12, auto_refresh=False) as live:
-            async for chunk in self.astream(input_data):
-                for node_name, state_update in chunk.items():
-                    if node_name != last_node:
-                        live.console.print(
-                            f"\n[bold magenta]Node:[/bold magenta] [cyan]{node_name}[/cyan]"
-                        )
-                        last_node = node_name
+            async for msg_chunk, metadata in self.astream(
+                input_data, stream_mode="messages"
+            ):
+                # Extract the node that produced this chunk
+                node_name = metadata.get("langgraph_node", "")
+                if node_name != last_node and node_name:
+                    if last_node:
+                        live.console.print()  # blank line between nodes
+                    live.console.print(
+                        f"[bold magenta]Node:[/bold magenta] [cyan]{node_name}[/cyan]"
+                    )
+                    last_node = node_name
 
-                    if isinstance(state_update, dict):
-                        messages = state_update.get("messages", [])
-                        if not messages:
-                            continue
-                    elif isinstance(state_update, tuple) and isinstance(state_update[0], Interrupt):
-                        messages = [state_update[0]]
-                    else:
-                        continue
+                # Use standard content_blocks for provider-agnostic parsing
+                if hasattr(msg_chunk, "content_blocks"):
+                    for block in msg_chunk.content_blocks:
+                        block_type = block.get("type", "")
+                        if block_type == "text":
+                            full_content += block.get("text", "")
+                        elif block_type == "reasoning":
+                            # Skip reasoning/thinking blocks in display
+                            pass
+                else:
+                    # Fallback: extract text from raw content
+                    content = msg_chunk.content
+                    if isinstance(content, str):
+                        full_content += content
 
-                    for msg in messages:
-                        if isinstance(msg, AIMessageChunk | BaseMessage):
-                            content = msg.content
-                            if isinstance(content, str):
-                                full_content += content
-                            elif isinstance(content, list):
-                                for block in content:
-                                    if isinstance(block, str):
-                                        full_content += block
-                                    elif (
-                                        isinstance(block, dict)
-                                        and block.get("type") == "text"
-                                    ):
-                                        # content is a dict with "type" and "text"
-                                        full_content += block.get("text", "")
-                            live.update(
-                                Panel(
-                                    Markdown(full_content),
-                                    title="AI:",
-                                    title_align="left",
-                                    border_style="green",
-                                ),
-                                refresh=True,
-                            )
-                        elif isinstance(msg, Interrupt):
-                            interrupt_data = msg.value
-                            live.update(
-                                Panel(
-                                    str(interrupt_data["message"]),
-                                    title="Interrupt:",
-                                    title_align="left",
-                                    border_style="red",
-                                ),
-                                refresh=True,
-                            )
+                live.update(
+                    Panel(
+                        Markdown(full_content),
+                        title=f"AI ({node_name}):" if node_name else "AI:",
+                        title_align="left",
+                        border_style="green",
+                    ),
+                    refresh=True,
+                )
+
             return full_content
 
 
-def build_chat_graph(model: BaseChatModel | _ConfigurableModel):
+def build_chat_graph(model: BaseChatModel):
     """
     Build a chat graph with automatic memory summarization.
 
@@ -260,7 +501,7 @@ def build_chat_graph(model: BaseChatModel | _ConfigurableModel):
 
     return workflow
 
-def build_self_correction_graph(model: BaseChatModel | _ConfigurableModel):
+def build_self_correction_graph(model: BaseChatModel):
     """
     Build a self-correction graph where chat and critic nodes loop infinitely.
 
@@ -280,11 +521,11 @@ def build_self_correction_graph(model: BaseChatModel | _ConfigurableModel):
 
     Usage:
         ```python
-        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.checkpoint.memory import InMemorySaver
         from langgraph.types import Command
 
         graph = build_self_correction_graph(model)
-        compiled = graph.compile(checkpointer=MemorySaver())
+        compiled = graph.compile(checkpointer=InMemorySaver())
 
         config = {"configurable": {"thread_id": "my-thread"}}
 
@@ -304,38 +545,15 @@ def build_self_correction_graph(model: BaseChatModel | _ConfigurableModel):
     critic_node = create_named_chat_node("critic", critic_chain)
     chat_node = create_named_chat_node("chat", chat_chain)
 
+    human_review = create_human_review_node(
+        destinations=("chat", "__end__"),
+        continue_to="chat",
+    )
+
     workflow = StateGraph(ConversationState, GraphContext)
     workflow.add_node("chat", chat_node)
     workflow.add_node("critic", critic_node)
-    async def human_review_node(
-        state: ConversationState, config: RunnableConfig
-    ) -> Command[Literal["chat", "__end__"]]:
-        """
-        Human review node that pauses execution after critic response.
-
-        Uses interrupt() to pause and wait for human decision.
-        Returns a Command to route to the next node based on human input.
-        """
-        # Get the last message (critic's response) to show to human
-        last_message = state["messages"][-1] if state["messages"] else None
-        critic_response = last_message.content if last_message else "No response"
-
-        # Interrupt and wait for human decision
-        # The human should respond with "continue" or "end"
-        human_decision = interrupt({
-            "message": "Critic has provided feedback. Continue the loop or end?",
-            "critic_response": critic_response,
-            "options": ["continue", "end"],
-        })
-
-        # Route based on human decision
-        if human_decision == "continue":
-            return Command(goto="chat")
-        else:
-            # Any other response (including "end") terminates the loop
-            return Command(goto="__end__")
-
-    workflow.add_node("human_review", human_review_node,destinations=("chat", "__end__"))
+    workflow.add_node("human_review", human_review, destinations=human_review.destinations)
     workflow.set_entry_point("chat")
     workflow.add_edge("chat", "critic")
     workflow.add_edge("critic", "human_review")

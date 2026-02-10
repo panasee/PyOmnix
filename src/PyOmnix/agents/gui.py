@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 import reflex as rx
 from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from pyomnix.agents.graphs import GraphSession, build_self_correction_graph
@@ -192,7 +192,7 @@ class AgentState(rx.State):
         )
 
         workflow = build_self_correction_graph(model)
-        graph = workflow.compile(checkpointer=MemorySaver())
+        graph = workflow.compile(checkpointer=InMemorySaver())
 
         return GraphSession(graph, thread_id=self.thread_id)
 

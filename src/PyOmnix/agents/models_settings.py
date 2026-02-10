@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from langchain.chat_models import init_chat_model
-from langchain.chat_models.base import _ConfigurableModel
+from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field, PostgresDsn, field_validator
 from pydantic_settings import (
     BaseSettings,
@@ -194,7 +194,7 @@ class ModelConfig:
         if tracing:
             self.setup_langsmith()
         self._initialized = True
-        self.model_factories: dict[str, _ConfigurableModel] = {}
+        self.model_factories: dict[str, BaseChatModel] = {}
 
     def setup_langsmith(self, full_sample: bool = False):
         """
@@ -253,7 +253,7 @@ class ModelConfig:
         if isinstance(factory_fullname, str):
             factory_fullname = [factory_fullname]
 
-        initialized: dict[str, _ConfigurableModel] = {}
+        initialized: dict[str, BaseChatModel] = {}
 
         for factory_name in factory_fullname:
             provider, api_name = self.extract_provider_model(factory_name)

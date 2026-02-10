@@ -8,15 +8,16 @@ This module provides node functions for building LangGraph agents including:
 - summarize_conversation: Summarization node for long conversations
 """
 
+from collections.abc import Callable
 from typing import Any, cast
 
-from langchain.chat_models.base import _ConfigurableModel
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
 from langgraph.graph.message import RemoveMessage
 from langgraph.prebuilt import ToolNode
+from langgraph.types import Command, interrupt
 
 from pyomnix.agents.prompts import PROMPTS
 from pyomnix.agents.runnables import create_chat_chain, empty_string_placeholder
@@ -51,12 +52,12 @@ def create_named_chat_node(node_name: str, chain: Runnable):
         chain: The LCEL chain to use for the debater.
     """
 
-    async def debater_node(state: ConversationState, config: RunnableConfig) -> dict[str, Any]:
+    async def named_node(state: ConversationState, config: RunnableConfig) -> dict[str, Any]:
         response = await chain.ainvoke(state, config=config)
         labeled_message = AIMessage(content=response.content, name=node_name)
         return {"messages": [labeled_message]}
 
-    return debater_node
+    return named_node
 
 
 def create_tools_node(tools: list | None = None) -> ToolNode:
@@ -74,7 +75,7 @@ def create_tools_node(tools: list | None = None) -> ToolNode:
 
 
 def create_summarize_node(
-    model: BaseChatModel | _ConfigurableModel,
+    model: BaseChatModel,
     temperature: float = 0.3,
     summary_max_length: int = 1000,
 ):
@@ -83,7 +84,7 @@ def create_summarize_node(
     note the config of summary_node is not the same as the config of other nodes, so we need to specify alone.
 
     Args:
-        model: BaseChatModel or _ConfigurableModel
+        model: BaseChatModel instance (or configurable model)
         temperature: Temperature for the model
         summary_max_length(tokens): Maximum length of the summary
     """
@@ -127,6 +128,118 @@ def create_summarize_node(
         return {"summary": response, "messages": delete_messages}
 
     return summarize_node
+
+
+# ---------------------------------------------------------------------------
+# Human-in-the-loop
+# ---------------------------------------------------------------------------
+
+
+def _default_interrupt_builder(state: ConversationState) -> dict[str, Any]:
+    """Default interrupt payload: show last message and offer continue/end."""
+    messages = state.get("messages", [])
+    last_msg = messages[-1] if messages else None
+    content = getattr(last_msg, "content", "") if last_msg else ""
+    name = getattr(last_msg, "name", None)
+    return {
+        "message": "Review the last response. Continue or end?",
+        "last_speaker": name or getattr(last_msg, "type", "unknown"),
+        "last_response": content[:300] if content else "",
+        "options": ["continue", "end"],
+    }
+
+
+def _default_resume_router(
+    continue_to: str,
+) -> Callable[[str, ConversationState], str]:
+    """Return a simple router: 'continue' -> *continue_to*, else -> __end__."""
+
+    def router(decision: str, state: ConversationState) -> str:
+        if decision == "continue":
+            return continue_to
+        return "__end__"
+
+    return router
+
+
+def create_human_review_node(
+    *,
+    destinations: tuple[str, ...],
+    resume_router: Callable[[str, ConversationState], str] | None = None,
+    interrupt_builder: Callable[[ConversationState], dict[str, Any]] | None = None,
+    continue_to: str | None = None,
+):
+    """Create a reusable human-in-the-loop review node.
+
+    The returned async function can be passed directly to
+    ``StateGraph.add_node()``.  It calls ``interrupt()`` to pause
+    execution and waits for a human decision string (via
+    ``Command(resume=...)``), then routes to the next node.
+
+    Two usage styles:
+
+    **Simple** -- provide ``continue_to`` for the common
+    "continue -> X, else -> __end__" pattern::
+
+        node = create_human_review_node(
+            destinations=("chat", "__end__"),
+            continue_to="chat",
+        )
+        workflow.add_node("human_review", node, destinations=node.destinations)
+
+    **Custom** -- provide ``resume_router`` and optionally
+    ``interrupt_builder`` for full control::
+
+        node = create_human_review_node(
+            destinations=("dougen", "penggen", "__end__"),
+            resume_router=my_router,      # (decision, state) -> node_name
+            interrupt_builder=my_builder,  # (state) -> interrupt payload dict
+        )
+        workflow.add_node("human_review", node, destinations=node.destinations)
+
+    Args:
+        destinations: All possible destination node names.  Store on the
+            returned function as ``node.destinations`` so callers can
+            forward it to ``add_node()``.
+        resume_router: ``(decision_str, state) -> node_name``.
+            If *None*, a default router is built from *continue_to*.
+        interrupt_builder: ``(state) -> dict`` payload for ``interrupt()``.
+            If *None*, a default is used that shows the last message and
+            offers ``["continue", "end"]``.
+        continue_to: Shorthand for a simple router where ``"continue"``
+            maps to this node and anything else maps to ``"__end__"``.
+            Ignored when *resume_router* is provided.
+
+    Returns:
+        An async node function with an attached ``.destinations`` attribute.
+
+    Raises:
+        ValueError: If neither *resume_router* nor *continue_to* is given.
+    """
+    if resume_router is None:
+        if continue_to is None:
+            raise ValueError(
+                "Provide either `resume_router` or `continue_to`."
+            )
+        resume_router = _default_resume_router(continue_to)
+
+    if interrupt_builder is None:
+        interrupt_builder = _default_interrupt_builder
+
+    async def human_review_node(
+        state: ConversationState,
+        config: RunnableConfig,
+    ) -> Command[str]:
+        """Pause for human review and route based on the decision."""
+        payload = interrupt_builder(state)  # type: ignore[misc]
+        decision = interrupt(payload)
+        goto = resume_router(decision, state)  # type: ignore[misc]
+        return Command(goto=goto)
+
+    # Attach metadata so callers can do:
+    #   workflow.add_node("x", node, destinations=node.destinations)
+    human_review_node.destinations = destinations  # type: ignore[attr-defined]
+    return human_review_node
 
 
 # TODO: reserved for future customization

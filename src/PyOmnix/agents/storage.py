@@ -29,7 +29,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, BinaryIO, Literal, cast
 
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.postgres.aio import Conn as PostgresConn
@@ -387,7 +387,9 @@ class StorageCoordinator:
         if self._stack is None:
             self._stack = AsyncExitStack()
 
-        self._hot_cache = await self._stack.enter_async_context(get_checkpointer(self.settings))
+        self._hot_cache = await self._stack.enter_async_context(
+            get_checkpointer(settings=self.settings)
+        )
         return self._hot_cache
 
     async def release_hot_cache(self) -> None:
@@ -534,11 +536,11 @@ async def get_checkpointer(
             await pool.close()
             logger.debug("Closed connection pool.")
     elif sql_type == "memory":
-        checkpointer = MemorySaver()
+        checkpointer = InMemorySaver()
         logger.info("In-memory checkpointer initialized.")
         yield checkpointer
         logger.debug("In-memory checkpointer closed.")
-    else:
+    elif sql_type == "sqlite":
         if AsyncSqliteSaver is None:  # pragma: no cover
             logger.raise_error(
                 "AsyncSqliteSaver not available. Install langgraph-checkpoint-sqlite.",
@@ -555,6 +557,11 @@ async def get_checkpointer(
             logger.info("SQLite checkpointer initialized at %s.", db_path)
             yield checkpointer
         logger.debug("SQLite checkpointer closed.")
+    else:
+        logger.raise_error(
+            f"Invalid type: {sql_type}. Valid types are: 'supabase', 'memory', 'sqlite'.",
+            ValueError,
+        )
 
 
 async def setup_checkpoint_tables(settings: Settings | None = None) -> None:
@@ -567,7 +574,7 @@ async def setup_checkpoint_tables(settings: Settings | None = None) -> None:
     Args:
         settings: Optional Settings instance. Uses get_settings() if not provided.
     """
-    async with get_checkpointer(settings) as _:
+    async with get_checkpointer(settings=settings) as _:
         # Tables are already created in get_checkpointer via setup()
         logger.info("Checkpoint tables have been set up successfully.")
 
@@ -602,7 +609,208 @@ def get_sync_checkpointer(settings: Settings | None = None) -> Any:
     return PostgresSaver.from_conn_string(_build_supabase_conninfo(settings))
 
 
+class CheckpointManager:
+    """Post-run inspection and management of checkpoint databases.
+
+    Opens a SQLite file or Supabase connection **directly** (no connection
+    pool, no table setup) so you can browse threads, check message counts,
+    and clean up old data *after* the graph has finished running.
+
+    Usage::
+
+        # SQLite -- reads the .db file path from settings
+        async with CheckpointManager.open_sqlite() as mgr:
+            await mgr.print_threads()
+            await mgr.delete_thread("old-thread-id")
+
+        # SQLite -- explicit path
+        async with CheckpointManager.open_sqlite("./checkpoints.db") as mgr:
+            await mgr.print_threads()
+
+        # Supabase / PostgreSQL
+        async with CheckpointManager.open_supabase() as mgr:
+            await mgr.print_threads()
+
+        # Pre-built checkpointer (e.g. InMemorySaver from a compiled graph)
+        mgr = CheckpointManager(graph.checkpointer)
+        await mgr.print_threads()
+    """
+
+    def __init__(
+        self,
+        checkpointer: AsyncPostgresSaver | AsyncSqliteSaver | InMemorySaver,
+    ) -> None:
+        self.checkpointer = checkpointer
+
+    # ------------------------------------------------------------------
+    # Factory class-methods (async context managers)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    @asynccontextmanager
+    async def open_sqlite(
+        cls,
+        db_path: Path | str | None = None,
+        settings: Settings | None = None,
+    ) -> AsyncGenerator["CheckpointManager", None]:
+        """Open a SQLite checkpoint ``.db`` file for inspection.
+
+        Args:
+            db_path: Explicit path to the ``.db`` file.  If ``None``,
+                reads ``sqlite_db_path`` from *settings*.
+            settings: Optional ``Settings``; defaults to ``get_settings()``.
+
+        Yields:
+            A ``CheckpointManager`` bound to the opened database.
+        """
+        if db_path is None:
+            settings = settings or get_settings()
+            db_path = settings.sqlite_db_path
+            if db_path is None:
+                logger.raise_error(
+                    "No SQLite path provided and sqlite_db_path is "
+                    "not configured in settings.",
+                    ValueError,
+                )
+        async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
+            logger.debug("CheckpointManager: opened SQLite at %s", db_path)
+            yield cls(saver)
+        logger.debug("CheckpointManager: closed SQLite connection.")
+
+    @classmethod
+    @asynccontextmanager
+    async def open_supabase(
+        cls,
+        settings: Settings | None = None,
+    ) -> AsyncGenerator["CheckpointManager", None]:
+        """Connect to Supabase / PostgreSQL for inspection.
+
+        Uses a single lightweight connection (no pool) since this is for
+        offline browsing, not runtime graph execution.
+
+        Args:
+            settings: Optional ``Settings``; defaults to ``get_settings()``.
+
+        Yields:
+            A ``CheckpointManager`` bound to the connection.
+        """
+        settings = settings or get_settings()
+        conninfo = _build_supabase_conninfo(settings)
+        conn = await AsyncConnection.connect(conninfo, autocommit=True)
+        conn.row_factory = dict_row  # type: ignore[assignment]
+        try:
+            saver = AsyncPostgresSaver(conn)  # type: ignore[arg-type]
+            logger.debug("CheckpointManager: connected to Supabase.")
+            yield cls(saver)
+        finally:
+            await conn.close()
+            logger.debug("CheckpointManager: closed Supabase connection.")
+
+    # ------------------------------------------------------------------
+    # Thread operations
+    # ------------------------------------------------------------------
+
+    async def list_threads(self, limit: int = 100) -> list[dict[str, Any]]:
+        """List all thread_ids stored in the checkpoint database.
+
+        Scans checkpoints and returns one summary per unique ``thread_id``
+        (the latest checkpoint for each thread).
+
+        Args:
+            limit: Maximum number of threads to return.
+
+        Returns:
+            List of dicts, each containing ``thread_id``, ``step``,
+            ``source``, ``message_count``, ``checkpoint_id``, and
+            ``timestamp``.
+        """
+        threads: dict[str, dict[str, Any]] = {}
+        async for cp_tuple in self.checkpointer.alist(None):  # type: ignore[arg-type]
+            tid = cp_tuple.config["configurable"]["thread_id"]  # type: ignore[typeddict-item]
+            if tid in threads:
+                continue  # already captured the latest for this thread
+            meta = cp_tuple.metadata or {}
+            channel_values = cp_tuple.checkpoint.get("channel_values", {})
+            msg_count = len(channel_values.get("messages", []))
+            threads[tid] = {
+                "thread_id": tid,
+                "step": meta.get("step", 0),
+                "source": meta.get("source", "?"),
+                "message_count": msg_count,
+                "checkpoint_id": cp_tuple.config["configurable"].get(  # type: ignore[typeddict-item]
+                    "checkpoint_id", "?"
+                ),
+                "timestamp": cp_tuple.checkpoint.get("ts", "?"),
+            }
+            if len(threads) >= limit:
+                break
+
+        return list(threads.values())
+
+    async def print_threads(self, limit: int = 100) -> None:
+        """Pretty-print all threads in the checkpoint database.
+
+        Args:
+            limit: Maximum number of threads to display.
+        """
+        from rich import box
+        from rich.console import Console
+        from rich.table import Table
+
+        threads = await self.list_threads(limit=limit)
+        console = Console()
+
+        if not threads:
+            console.print("[dim]No threads found in the database.[/dim]")
+            return
+
+        table = Table(
+            title=f"Threads ({len(threads)} found)",
+            box=box.ROUNDED,
+            title_style="bold blue",
+            header_style="bold magenta",
+        )
+        table.add_column("Thread ID", style="cyan", min_width=20)
+        table.add_column("Messages", justify="right", width=9)
+        table.add_column("Steps", justify="right", width=6)
+        table.add_column("Last Writer", width=12)
+        table.add_column("Timestamp", width=28)
+
+        for t in threads:
+            table.add_row(
+                t["thread_id"],
+                str(t["message_count"]),
+                str(t["step"]),
+                str(t["source"]),
+                str(t["timestamp"]),
+            )
+
+        console.print(table)
+
+    async def delete_thread(self, thread_id: str) -> None:
+        """Delete all checkpoints for a given thread_id.
+
+        Args:
+            thread_id: The thread to delete.
+
+        Raises:
+            NotImplementedError: If the checkpointer backend does not
+                support deletion.
+        """
+        cp = self.checkpointer
+        if hasattr(cp, "adelete_thread"):
+            await cp.adelete_thread(thread_id)  # type: ignore[union-attr]
+        elif hasattr(cp, "delete_thread"):
+            cp.delete_thread(thread_id)  # type: ignore[union-attr]
+        else:
+            raise NotImplementedError(
+                f"{type(cp).__name__} does not support delete_thread"
+            )
+        logger.info("Deleted all checkpoints for thread '%s'", thread_id)
+
+
 __all__ = [
+    "CheckpointManager",
     "DriveManager",
     "StorageCoordinator",
     "get_checkpointer",

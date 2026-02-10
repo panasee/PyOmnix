@@ -18,6 +18,7 @@ import re
 import sys
 import threading
 import time
+import asyncio
 from collections.abc import Sequence
 from importlib import resources
 from pathlib import Path
@@ -108,6 +109,9 @@ class DataManipulator:
         self._webgl_mode: Literal["off", "on", "auto"] = "auto"
         self._marker_toggle_threshold: int = 20000
         self._disable_hover_threshold: int = 10000
+        self._kaleido_instance = None
+        self._kaleido_lock = threading.Lock()
+        self._save_loop = None
 
     def get_dash_port(self) -> int | None:
         return self._dash_port
@@ -1048,24 +1052,59 @@ class DataManipulator:
         if isinstance(plot_path, str):
             plot_path = Path(plot_path)
         plot_path.parent.mkdir(parents=True, exist_ok=True)
-        while not self._stop_event.is_set():
-            time.sleep(time_interval)
-            max_retries = 3
-            retry_delay = 2
-            for attempt in range(max_retries):
-                try:
-                    self.go_f.write_image(plot_path)
+
+        self._save_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._save_loop)
+        import kaleido
+        self._kaleido_instance = kaleido.Kaleido(n=1, timeout=120)
+        self._save_loop.run_until_complete(self._kaleido_instance.__aenter__())
+
+        try:
+            while not self._stop_event.is_set():
+                # Use event-based waiting instead of time.sleep for faster interrupt response
+                if self._stop_event.wait(timeout=time_interval):
                     break
-                except Exception as e:
-                    if attempt < max_retries - 1:
-                        logger.warning(
-                            f"Failed to save image (attempt {attempt + 1}/{max_retries}): {e!s}"
+                if self._stop_event.is_set():
+                    break
+                with self._kaleido_lock:
+                    try:
+                        self._save_loop.run_until_complete(
+                            self._kaleido_instance.write_fig(
+                                self.go_f, 
+                                path=str(plot_path), 
+                                opts={"format": "png"}
+                            )
                         )
-                        time.sleep(retry_delay)
-                    else:
-                        logger.error(
-                            f"Failed to save image after {max_retries} attempts: {e!s}"
-                        )
+                    except asyncio.CancelledError:
+                        # Gracefully handle cancellation during save
+                        logger.warning("Save operation was cancelled")
+                        break
+                    except Exception as e:
+                        logger.warning(f"Failed to save image: {e}")
+        except (KeyboardInterrupt, SystemExit):
+            # Handle manual interruption gracefully
+            pass
+        except Exception:
+            # Catch any other exception during the loop
+            pass
+        finally:
+            self._cleanup_kaleido()
+#            max_retries = 3
+#            retry_delay = 2
+#            for attempt in range(max_retries):
+#                try:
+#                    self.go_f.write_image(plot_path)
+#                    break
+#                except Exception as e:
+#                    if attempt < max_retries - 1:
+#                        logger.warning(
+#                            f"Failed to save image (attempt {attempt + 1}/{max_retries}): {e!s}"
+#                        )
+#                        time.sleep(retry_delay)
+#                    else:
+#                        logger.error(
+#                            f"Failed to save image after {max_retries} attempts: {e!s}"
+#                        )
 
     def start_saving(self, plot_path: Path | str, time_interval: int = 60) -> None:
         """
@@ -1077,13 +1116,47 @@ class DataManipulator:
         )
         self._thread.start()
 
+    def _cleanup_kaleido(self) -> None:
+        """
+        Clean up the Kaleido instance and event loop properly.
+        Let Kaleido handle its own cleanup gracefully without forcing task cancellation.
+        """
+        import warnings
+        
+        # Suppress the "coroutine was never awaited" warning during cleanup
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
+            
+            # Clean up Kaleido instance first - let it handle its own shutdown
+            if self._kaleido_instance is not None:
+                try:
+                    if self._save_loop is not None and not self._save_loop.is_closed():
+                        self._save_loop.run_until_complete(
+                            self._kaleido_instance.__aexit__(None, None, None)
+                        )
+                except asyncio.CancelledError:
+                    # Expected during shutdown, ignore
+                    pass
+                except Exception:
+                    pass
+                self._kaleido_instance = None
+
+            # Close the event loop after Kaleido cleanup
+            if self._save_loop is not None:
+                try:
+                    if not self._save_loop.is_closed():
+                        self._save_loop.close()
+                except Exception:
+                    pass
+                self._save_loop = None
+
     def stop_saving(self) -> None:
         """
         stop the thread to save the figure periodically
         """
         self._stop_event.set()
         if self._thread is not None:
-            self._thread.join()
+            self._thread.join(timeout=10)
             self._thread = None
 
     def live_plot_update(
