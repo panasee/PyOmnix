@@ -518,6 +518,44 @@ def symmetrize(
     # return pd.concat([sym_df, antisym_df], axis = 1)
     return sym_df, antisym_df
 
+def extract_longest_monotonic_segment(
+    df: pd.DataFrame, col: str = "I_source"
+) -> pd.DataFrame:
+    """Extract the longest monotonically increasing or decreasing segment from a DataFrame.
+
+    The function identifies contiguous segments where the values in ``col``
+    move in one direction (increasing or decreasing, with flat regions
+    treated as continuing the previous trend) and returns the longest one.
+
+    Args:
+        df: The input DataFrame.
+        col: The column name whose monotonicity is evaluated.
+
+    Returns:
+        A copy of the longest monotonic segment (original columns preserved).
+    """
+    # 1. Compute the sign of the first-order difference.
+    #    np.sign(0) returns 0; replace 0 with NaN then forward-fill so that
+    #    flat regions inherit the direction of the preceding trend.
+    #    Back-fill handles the leading NaN (from diff) so the first row is
+    #    grouped with the opening trend instead of being isolated.
+    diff_sign = np.sign(df[col].diff()).replace(0, np.nan).ffill().bfill()
+
+    # 2. Detect direction-change points.
+    #    A change occurs when the current sign differs from the previous one.
+    direction_changes = diff_sign != diff_sign.shift()
+
+    # 3. Assign a segment ID to every row.
+    #    Each direction reversal increments the cumulative sum by 1,
+    #    thereby separating distinct monotonic intervals.
+    segment_id = direction_changes.cumsum()
+
+    # 4. Find the segment ID with the most rows (i.e. the longest segment).
+    longest_segment_id = segment_id.value_counts().idxmax()
+
+    # 5. Extract and return the longest segment.
+    return df[segment_id == longest_segment_id].copy()
+
 
 def difference(
     ori_df: Sequence[pd.DataFrame],
