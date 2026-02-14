@@ -27,12 +27,13 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from pyomnix.agents.edges import should_summarize_edge
+from pyomnix.agents.edges import should_summarize_edge, should_tools_edge
 from pyomnix.agents.nodes import (
     create_chat_node,
     create_human_review_node,
     create_named_chat_node,
     create_summarize_node,
+    create_tools_node,
 )
 from pyomnix.agents.prompts import PROMPTS
 from pyomnix.agents.runnables import create_chat_chain
@@ -499,6 +500,34 @@ def build_chat_graph(model: BaseChatModel):
 
     workflow.add_edge("summarize", END)
 
+    return workflow
+
+
+def build_tool_agent_graph(model: BaseChatModel, tools: list | None = None):
+    """Build a ReAct-style tool-calling graph.
+
+    Flow:
+        chat -> (tools or end)
+        tools -> chat
+    """
+    tools = tools or []
+    chat_chain = create_chat_chain(model, tools=tools)
+    chat_node = create_chat_node(chat_chain)
+    tools_node = create_tools_node(tools)
+
+    workflow = StateGraph(ConversationState, GraphContext)
+    workflow.add_node("chat", chat_node)
+    workflow.add_node("tools", tools_node)
+    workflow.set_entry_point("chat")
+    workflow.add_conditional_edges(
+        "chat",
+        should_tools_edge,
+        {
+            "tools": "tools",
+            "no_tools": END,
+        },
+    )
+    workflow.add_edge("tools", "chat")
     return workflow
 
 def build_self_correction_graph(model: BaseChatModel):

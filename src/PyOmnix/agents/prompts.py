@@ -79,9 +79,9 @@ class PromptRegistry:
         """
         Get a prompt by key.
         """
-        if hasattr(self, key):
-            return getattr(self, key)
-        return self.extra_prompts.get(key, f"Prompt {key} not found")
+        if key in self.extra_prompts:
+            return self.extra_prompts[key]
+        return getattr(self, key, self.default)
 
     def load_overrides(self, path: Path | str | None = None):
         """

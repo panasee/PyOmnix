@@ -165,3 +165,43 @@ def create_structured_output_chain(
         raise ValueError(f"Invalid schema type: {type(schema)}")
     chain = prompt | structured_llm
     return cast(Runnable, chain)
+
+
+def create_multimodal_chain(
+    llm: BaseChatModel,
+    system_prompt: str = PROMPTS.get("default"),
+) -> Runnable:
+    """Create a lightweight multimodal LCEL chain for text + image blocks.
+
+    Expected input payload:
+        {
+            "text": "...",
+            "images": [{"type": "image_url", "image_url": {"url": "..."}}, ...]
+        }
+    """
+
+    def to_multimodal_input(payload: dict[str, Any]) -> dict[str, Any]:
+        text = payload.get("text", "")
+        images = payload.get("images", [])
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": text}] + images,
+            }
+        ]
+        return {
+            "messages": messages,
+            "summary": empty_string_placeholder("summary"),
+            "user_profile": empty_string_placeholder("user profile"),
+            "structured_memory": empty_string_placeholder("structured memory"),
+            "retrieved_docs": empty_string_placeholder("retrieved docs"),
+            "current_intent": empty_string_placeholder("current intent"),
+        }
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="messages"),
+        ]
+    )
+    return RunnableLambda(to_multimodal_input) | prompt | llm
