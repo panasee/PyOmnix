@@ -36,23 +36,34 @@ dependencies = [
     "pandas",
     "matplotlib",
     "waitress",
-    "plotly>=5.24.0",
-    "kaleido==0.1.0.post1",
+    "plotly~=6.4.0",
+    "kaleido~=1.2.0",
     "jupyter",
     "anywidget",
     "dash",
     "rich",
     "prefect>=3.2.9",
-    "langchain>=0.3.20",
-    "langgraph>=0.3.18",
+    "langchain>=1.2.0",
+    "langgraph>=1.0.0",
     "langchain-deepseek",
     "langchain-huggingface",
     "langchain-openai",
     "langchain-anthropic",
     "langchain-google-genai",
+    "langchain-google-vertexai",
+    "langchain-google-community",
     "langchain-community",
     "pydantic>=2.10.6",
+    "pydantic-settings>=2.0.0",
     "questionary",
+    "fsspec>=2024.0.0",
+    "google-api-python-client",
+    "google-auth-httplib2",
+    "google-auth-oauthlib",
+    "pydata_google_auth",
+    "langgraph-checkpoint-postgres>=2.0.0",
+    "langgraph-checkpoint-sqlite>=3.0.0",
+    "psycopg[binary,pool]>=3.1.0",
 ]
 
 [project.optional-dependencies]
@@ -84,7 +95,7 @@ gui_easy_data = "pyomnix.data_process.easy_gui:gui_easy_data"
 include-package-data = true
 
 [tool.setuptools.package-data]
-pyomnix = ["pltconfig/pan_color.json"]
+pyomnix = ["pltconfig/pan-colors.json", "agents/sql/*.sql"]
 
 [tool.ruff]
 line-length = 100
