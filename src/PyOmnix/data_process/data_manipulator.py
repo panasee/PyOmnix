@@ -1243,13 +1243,12 @@ class DataManipulator:
                 isinstance(lst_x_data, list) or isinstance(lst_x_data, tuple),
                 "provide correct candlestick dataframe or list of candlestick dataframes",
             )
-            extracted = zip(
-                *[self.candle_df_filter(x) for x in lst_x_data], strict=True
-            )
+            extracted_rows = [self.candle_df_filter(x) for x in lst_x_data]
             logger.validate(
-                extracted is not None,
-                "Failed to extract data from candlestick dataframes",
+                all(row is not None for row in extracted_rows),
+                "Failed to extract data from candlestick dataframe(s)",
             )
+            extracted = zip(*extracted_rows, strict=True)
             time_data, open_vals, high_vals, low_vals, close_vals, _ = extracted
         else:
             if not incremental:
@@ -1448,13 +1447,14 @@ class DataManipulator:
                 for key, value in os.environ.items()
                 if localenv_filter.match(key)
             }
-            used_var = list(filtered_vars.keys())[0]
             if filtered_vars:
+                used_var = list(filtered_vars.keys())[0]
                 filepath = Path(filtered_vars[used_var]) / "pan-colors.json"
                 logger.info(f"load path from ENVIRON: {used_var}")
                 return DataManipulator.sel_pan_color(row, col, data_extract, filepath)
             else:
-                with resources.open_text("DaySpark.pltconfig", "pan_color.json") as f:
+                default_palette = resources.files("pyomnix.pltconfig").joinpath("pan-colors.json")
+                with default_palette.open("r", encoding="utf-8") as f:
                     color_dict = json.load(f)
         else:
             with open(external_file, encoding="utf-8") as f:

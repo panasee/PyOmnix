@@ -128,6 +128,10 @@ class ObjectArray:
                 self.__setitem__(self.pointer_next, value)
                 return
             index = np.unravel_index(index, self.shape)
+        logger.validate(
+            self._validate_uniqueness(value, index),
+            f"Value already exists in ObjectArray at other location(s): {value!r}",
+        )
         arr = self.objects
         for idx in index[:-1]:
             arr = arr[idx]
@@ -240,6 +244,7 @@ class ObjectArray:
 
         # Update shape and objects
         self.shape = dims
+        self.size = np.prod(dims)
         self.objects = new_objects
 
     def clear(self) -> None:
@@ -268,7 +273,8 @@ class ObjectArray:
         """
         if len(source_idx) == len(source_shape):
             # We've reached the elements, copy the value
-            self._set_subarray(target, target_idx, self._get_subarray(source, source_idx))
+            value = self._get_at_index(source, source_idx)
+            self._set_at_index(target, target_idx, value)
             return
 
         # Get current dimension
@@ -277,6 +283,22 @@ class ObjectArray:
         # Recursively copy elements for this dimension
         for i in range(source_shape[dim_idx]):
             self._copy_elements(source, target, source_shape, source_idx + (i,), target_idx + (i,))
+
+    @staticmethod
+    def _get_at_index(array: list, index: tuple[int, ...]) -> Any:
+        """Get a nested-list element by multi-dimensional index."""
+        cur: Any = array
+        for idx in index:
+            cur = cur[idx]
+        return cur
+
+    @staticmethod
+    def _set_at_index(array: list, index: tuple[int, ...], value: Any) -> None:
+        """Set a nested-list element by multi-dimensional index."""
+        cur: Any = array
+        for idx in index[:-1]:
+            cur = cur[idx]
+        cur[index[-1]] = copy.deepcopy(value)
 
     def find(self, search_value: Any) -> list[tuple[int, ...]]:
         """
