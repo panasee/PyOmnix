@@ -1,101 +1,100 @@
-# 🔬 PyOmnix
+# PyOmnix
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-**PyOmnix** is an integrated package designed for scientific computing, data analysis, and AI development assistance. It provides a comprehensive suite of tools for data processing, visualization, and AI model integration.
+PyOmnix is a Python toolkit for scientific data workflows, plotting, and AI-oriented utilities.
+It is built as a modular library so you can use only the components you need.
 
-## 📋 Table of Contents
+## Overview
 
-- [Overview](#overview)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Features](#features)
-- [Dependencies](#dependencies)
-- [License](#license)
+PyOmnix currently provides:
 
-## 🌟 Overview
+- Data processing helpers for experimental/scientific tabular data.
+- Plotting utilities built around Matplotlib and Plotly.
+- GUI tools for fast data inspection and manipulation.
+- Agent-related modules for model/tool orchestration.
+- Logging, environment, file, and math utility helpers.
 
-PyOmnix is a versatile Python package that combines various tools and utilities for:
+## Installation
 
-- 📊 **Data Processing**: Efficient data manipulation and analysis tools
-- 📈 **Scientific Visualization**: Advanced plotting capabilities
-- 🤖 **AI Integration**: Seamless AI model integration and management
-- ⚙️ **Workflow Automation**: Streamlined workflow management
-- 📝 **Logging & Monitoring**: Comprehensive logging and monitoring solutions
+### Base
 
-The package is designed to be modular and extensible, allowing users to integrate different components as needed.
-
-## 💻 Installation
-
-### Installation
 ```bash
 pip install pyomnix
 ```
 
-### For Development
+### Optional extras
+
 ```bash
-# git clone and cd to dir
+# GUI support (PyQt6 + WebEngine)
+pip install "pyomnix[gui]"
+
+# Web-related tools
+pip install "pyomnix[web]"
+
+# Development toolchain
 pip install -e ".[dev]"
 ```
 
-### For GUI Support
-```bash
-pip install "pyomnix[gui]"
-```
+## Quick Start
 
-## 🚀 Usage
+### Logging
 
-### Logger
 ```python
 from pyomnix import setup_logger, get_logger
 
-# Setup logging with default configuration
-logger = setup_logger()
-
-# Get a logger instance
+setup_logger()
 logger = get_logger(__name__)
+logger.info("PyOmnix is ready.")
 ```
 
-### GUI Application
+### Data Manipulator
+
+```python
+from pyomnix.data_process import DataManipulator
+
+dm = DataManipulator(1)
+# Example:
+# dm.load_dfs(loc=0, data_in="data.csv")
+# dfs = dm.get_datas(loc=0)
+```
+
+## CLI Entry Points
+
+After installation, these commands are available:
+
+- `gui_pan_color`: Launch the color palette selector.
+- `gui_easy_data`: Launch the PyQt-based data GUI.
+
+## Project Structure
+
+- `src/pyomnix/data_process/`: data loading, splitting, plotting, GUI tools.
+- `src/pyomnix/utils/`: reusable data/math/plot/environment/file utilities.
+- `src/pyomnix/agents/`: graph, node, tool, prompt, storage, and settings modules.
+- `src/pyomnix/omnix_logger.py`: logging framework used across the project.
+- `src/pyomnix/pltconfig/`: plotting and color configuration assets.
+
+## Development
+
 ```bash
-# Launch the GUI application
-gui_pan_color
+# Lint
+ruff check .
+
+# Format (if you use black in your workflow)
+black .
+
+# Run tests
+pytest
 ```
 
-## ✨ Features
+## Requirements
 
-### Core Features
-- **Data Processing**: Tools for data manipulation and analysis
-- **Visualization**: Plotting capabilities with matplotlib and plotly
-- **AI Integration**: Support for AI models and frameworks
-- **Workflow Management**: Prefect-based workflow automation
+- Python `>=3.12`
 
-### Key Components
-- 📁 `data_process/`: Data processing and analysis tools
-- 🤖 `model_interface/`: AI model integration
-- 🛠️ `utils/`: Utility functions and helpers
-- 📝 `omnix_logger.py`: Advanced logging system
+See `pyproject.toml` for the complete dependency list.
 
-## 📦 Dependencies
+## License
 
-### Core Dependencies
-| Package | Purpose |
-|---------|---------|
-| numpy | Numerical computing |
-| pandas | Data manipulation |
-| matplotlib | Basic plotting |
-| plotly | Interactive visualization |
-| jupyter | Notebook support |
-| prefect | Workflow support |
-| pydantic | Data validation |
-| langchain | AI framework integration |
-| langgraph | Graph-based AI workflows |
-
-### Optional Dependencies
-- PyQt6: GUI support
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See `LICENSE` for details.

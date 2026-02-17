@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyomnix"
-version = "0.1b1"
+version = "0.2"
 description = "Integrated Tools for Scientific Computing, Data Analysis, and AI Development"
 authors = [
     {name = "Dongkai", email = "dongkai001@e.ntu.edu.sg"}
@@ -13,7 +13,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
@@ -36,8 +36,8 @@ dependencies = [
     "pandas",
     "matplotlib",
     "waitress",
-    "plotly~=6.4.0",
-    "kaleido~=1.2.0",
+    "plotly>=6.4.0",
+    "kaleido>=1.2.0",
     "jupyter",
     "anywidget",
     "dash",
