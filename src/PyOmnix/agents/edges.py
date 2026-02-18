@@ -49,3 +49,17 @@ def should_summarize_edge(
         return "summarize"
 
     return "no_summarize"
+
+
+def should_multimodal_ingest_edge(
+    state: ConversationState,
+) -> Literal["ingest", "skip_ingest"]:
+    """
+    Route to multimodal ingest only when at least one modality is present.
+    """
+    modality_fields = ("images", "audio_files", "video_files", "pdf_files")
+    for field in modality_fields:
+        value = state.get(field, [])
+        if isinstance(value, list) and len(value) > 0:
+            return "ingest"
+    return "skip_ingest"

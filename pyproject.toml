@@ -34,6 +34,8 @@ dependencies = [
     "pillow",
     "numpy",
     "pandas",
+    "requests",
+    "beautifulsoup4",
     "matplotlib",
     "waitress",
     "plotly>=6.4.0",

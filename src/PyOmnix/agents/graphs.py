@@ -10,6 +10,7 @@ import json as _json
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -27,10 +28,15 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from pyomnix.agents.edges import should_summarize_edge, should_tools_edge
+from pyomnix.agents.edges import (
+    should_multimodal_ingest_edge,
+    should_summarize_edge,
+    should_tools_edge,
+)
 from pyomnix.agents.nodes import (
     create_chat_node,
     create_human_review_node,
+    create_multimodal_ingest_node,
     create_named_chat_node,
     create_summarize_node,
     create_tools_node,
@@ -41,6 +47,15 @@ from pyomnix.agents.schemas import ConversationState, GraphContext
 from pyomnix.omnix_logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _create_passthrough_node():
+    """Create a no-op async node for routing."""
+
+    async def passthrough_node(state: ConversationState, config: RunnableConfig) -> dict[str, Any]:
+        return {}
+
+    return passthrough_node
 
 
 def _extract_text_content(msg) -> str:
@@ -467,7 +482,16 @@ class GraphSession:
             return full_content
 
 
-def build_chat_graph(model: BaseChatModel):
+def build_chat_graph(
+    model: BaseChatModel,
+    *,
+    enable_multimodal: bool = False,
+    multimodal_preprocessor: Callable[[ConversationState], dict[str, Any]] | None = None,
+    multimodal_processing_mode: str = "passthrough",
+    multimodal_inline_max_bytes: int = 5_000_000,
+    use_gdrive_for_large_assets: bool = False,
+    gdrive_uploader: Callable[[bytes, str], Any] | None = None,
+):
     """
     Build a chat graph with automatic memory summarization.
 
@@ -486,8 +510,35 @@ def build_chat_graph(model: BaseChatModel):
 
     workflow.add_node("conversation", chat_node)
     workflow.add_node("summarize", summarize_node)
-
-    workflow.set_entry_point("conversation")
+    if enable_multimodal:
+        effective_mode = (
+            "preprocess"
+            if multimodal_preprocessor is not None and multimodal_processing_mode == "passthrough"
+            else multimodal_processing_mode
+        )
+        workflow.add_node("ingest_router", _create_passthrough_node())
+        workflow.add_node(
+            "multimodal_ingest",
+            create_multimodal_ingest_node(
+                processing_mode=effective_mode,
+                preprocessor=multimodal_preprocessor,
+                inline_max_bytes=multimodal_inline_max_bytes,
+                use_gdrive_for_large=use_gdrive_for_large_assets,
+                gdrive_uploader=gdrive_uploader,
+            ),
+        )
+        workflow.set_entry_point("ingest_router")
+        workflow.add_conditional_edges(
+            "ingest_router",
+            should_multimodal_ingest_edge,
+            {
+                "ingest": "multimodal_ingest",
+                "skip_ingest": "conversation",
+            },
+        )
+        workflow.add_edge("multimodal_ingest", "conversation")
+    else:
+        workflow.set_entry_point("conversation")
 
     workflow.add_conditional_edges(
         "conversation",
@@ -503,7 +554,17 @@ def build_chat_graph(model: BaseChatModel):
     return workflow
 
 
-def build_tool_agent_graph(model: BaseChatModel, tools: list | None = None):
+def build_tool_agent_graph(
+    model: BaseChatModel,
+    tools: list | None = None,
+    *,
+    enable_multimodal: bool = False,
+    multimodal_preprocessor: Callable[[ConversationState], dict[str, Any]] | None = None,
+    multimodal_processing_mode: str = "passthrough",
+    multimodal_inline_max_bytes: int = 5_000_000,
+    use_gdrive_for_large_assets: bool = False,
+    gdrive_uploader: Callable[[bytes, str], Any] | None = None,
+):
     """Build a ReAct-style tool-calling graph.
 
     Flow:
@@ -518,7 +579,35 @@ def build_tool_agent_graph(model: BaseChatModel, tools: list | None = None):
     workflow = StateGraph(ConversationState, GraphContext)
     workflow.add_node("chat", chat_node)
     workflow.add_node("tools", tools_node)
-    workflow.set_entry_point("chat")
+    if enable_multimodal:
+        effective_mode = (
+            "preprocess"
+            if multimodal_preprocessor is not None and multimodal_processing_mode == "passthrough"
+            else multimodal_processing_mode
+        )
+        workflow.add_node("ingest_router", _create_passthrough_node())
+        workflow.add_node(
+            "multimodal_ingest",
+            create_multimodal_ingest_node(
+                processing_mode=effective_mode,
+                preprocessor=multimodal_preprocessor,
+                inline_max_bytes=multimodal_inline_max_bytes,
+                use_gdrive_for_large=use_gdrive_for_large_assets,
+                gdrive_uploader=gdrive_uploader,
+            ),
+        )
+        workflow.set_entry_point("ingest_router")
+        workflow.add_conditional_edges(
+            "ingest_router",
+            should_multimodal_ingest_edge,
+            {
+                "ingest": "multimodal_ingest",
+                "skip_ingest": "chat",
+            },
+        )
+        workflow.add_edge("multimodal_ingest", "chat")
+    else:
+        workflow.set_entry_point("chat")
     workflow.add_conditional_edges(
         "chat",
         should_tools_edge,
@@ -530,7 +619,16 @@ def build_tool_agent_graph(model: BaseChatModel, tools: list | None = None):
     workflow.add_edge("tools", "chat")
     return workflow
 
-def build_self_correction_graph(model: BaseChatModel):
+def build_self_correction_graph(
+    model: BaseChatModel,
+    *,
+    enable_multimodal: bool = False,
+    multimodal_preprocessor: Callable[[ConversationState], dict[str, Any]] | None = None,
+    multimodal_processing_mode: str = "passthrough",
+    multimodal_inline_max_bytes: int = 5_000_000,
+    use_gdrive_for_large_assets: bool = False,
+    gdrive_uploader: Callable[[bytes, str], Any] | None = None,
+):
     """
     Build a self-correction graph where chat and critic nodes loop infinitely.
 
@@ -583,7 +681,35 @@ def build_self_correction_graph(model: BaseChatModel):
     workflow.add_node("chat", chat_node)
     workflow.add_node("critic", critic_node)
     workflow.add_node("human_review", human_review, destinations=human_review.destinations)
-    workflow.set_entry_point("chat")
+    if enable_multimodal:
+        effective_mode = (
+            "preprocess"
+            if multimodal_preprocessor is not None and multimodal_processing_mode == "passthrough"
+            else multimodal_processing_mode
+        )
+        workflow.add_node("ingest_router", _create_passthrough_node())
+        workflow.add_node(
+            "multimodal_ingest",
+            create_multimodal_ingest_node(
+                processing_mode=effective_mode,
+                preprocessor=multimodal_preprocessor,
+                inline_max_bytes=multimodal_inline_max_bytes,
+                use_gdrive_for_large=use_gdrive_for_large_assets,
+                gdrive_uploader=gdrive_uploader,
+            ),
+        )
+        workflow.set_entry_point("ingest_router")
+        workflow.add_conditional_edges(
+            "ingest_router",
+            should_multimodal_ingest_edge,
+            {
+                "ingest": "multimodal_ingest",
+                "skip_ingest": "chat",
+            },
+        )
+        workflow.add_edge("multimodal_ingest", "chat")
+    else:
+        workflow.set_entry_point("chat")
     workflow.add_edge("chat", "critic")
     workflow.add_edge("critic", "human_review")
     return workflow

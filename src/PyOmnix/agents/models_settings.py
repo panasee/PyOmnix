@@ -25,13 +25,29 @@ from pyomnix.omnix_logger import get_logger
 
 logger = get_logger(__name__)
 
-PROVIDER_ALIASES = {  # use small letters
-    "openai": {"openai", "gpt"},
-    "google_vertexai": {"vertexai", "vertex"},
-    "google_genai": {"gemini", "aistudio", "genai", "google"},
-    "anthropic": {"anthropic", "claude"},
-    "deepseek": {"deepseek", "ds"},
-    "groq": {"groq"},
+INTRINSIC_PROVIDER_ALIAS = {  # use small letters
+    "openai": ["openai", "gpt"],
+    "anthropic": ["anthropic", "claude"],
+    "azure_openai": ["azure_openai", "azure_ai"],
+    "azure_ai": ["azure_ai"],
+    "google_vertexai": ["google_vertexai", "vertexai", "vertex"],
+    "google_genai": ["google_genai", "gemini", "aistudio", "genai", "google"],
+    "bedrock": ["bedrock"],
+    "bedrock_converse": ["bedrock_converse"],
+    "cohere": ["cohere"],
+    "fireworks": ["fireworks"],
+    "together": ["together"],
+    "groq": ["groq"],
+    "mistralai": ["mistralai"],
+    "huggingface": ["huggingface"],
+    "ollama": ["ollama"],
+    "google_anthropic_vertex": ["google_anthropic_vertex"],
+    "deepseek": ["deepseek"],
+    "ibm": ["ibm"],
+    "nvidia": ["nvidia", "nvidia-ai-endpoints"],
+    "xai": ["xai"],
+    "perplexity": ["perplexity"],
+    "upstage": ["upstage"],
 }
 
 
@@ -74,8 +90,8 @@ class Settings(BaseSettings):
     langsmith: ProviderConfig
     request_appendix: dict[str, str] = Field(default_factory=dict)
     openai: ProviderConfig
-    google: ProviderConfig
-    vertex: ProviderConfig
+    google_genai: ProviderConfig
+    google_vertexai: ProviderConfig
     deepseek: ProviderConfig
     groq: ProviderConfig
     zhipu: ProviderConfig
@@ -88,6 +104,8 @@ class Settings(BaseSettings):
     supabase_ssl_cert: Path | None = None
     gdrive_key: dict[str, Any] | None = None
     gdrive_folder_id: str | None = None
+    gdrive_folder_id_public: str | None = None
+    tavily_api_key: str | None = None
 
     postgres_pool_min_size: int = Field(
         default=1, description="Minimum number of connections in the async pool"
@@ -236,6 +254,7 @@ class ModelConfig:
         """
         Setup providers and model apis (deepseek/openai api can be used for most models). Indicate the provider before the model name if used. (e.g. "siliconflow-deepseek")
         The provider portion is looked up in the local config for credentials, while the API portion selects the LangChain integration to use.
+        The returned instance is a LangChain ConfigurableModel, which must be configured with a model name (e.g. ins.with_config(llm_model="deepseek-chat")) before use.
 
         Returns:
             A dictionary of initialized model factories, they can be used to invoke with messages, or preferably configed before use.
@@ -245,7 +264,7 @@ class ModelConfig:
             """
             Canonicalize the model name and judge if it is a intrinsically supported provider.
             """
-            for target, aliases in PROVIDER_ALIASES.items():
+            for target, aliases in INTRINSIC_PROVIDER_ALIAS.items():
                 if provider.strip().lower() in aliases:
                     return target, True
             return provider, False
@@ -303,7 +322,7 @@ class ModelConfig:
         Get the API configuration for a specific provider.
 
         Args:
-            provider: The model provider (e.g., 'openai', 'google', 'deepseek')
+            provider: The model provider (e.g., 'openai', 'google_genai', 'google_vertexai', 'deepseek')
 
         Returns:
             A tuple of (api_key, base_url, provider_kwargs)
