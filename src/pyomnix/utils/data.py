@@ -3,9 +3,10 @@ from __future__ import annotations
 import copy
 from collections.abc import Sequence
 from itertools import groupby
-from typing import Any, Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
+
 if TYPE_CHECKING:
     import pandas as pd
 
@@ -41,7 +42,9 @@ class ObjectArray:
         self.size = np.prod(dims)
         self.fill_value = fill_value
         self.unique = unique
-        self.objects = self._create_objects(dims) # customized initialization can be implemented by overriding this method
+        self.objects = self._create_objects(
+            dims
+        )  # customized initialization can be implemented by overriding this method
 
     def __repr__(self) -> str:
         """
@@ -193,7 +196,7 @@ class ObjectArray:
         locations = self.find(value)
         # Filter out the current index from locations if it exists
         other_locations = [loc for loc in locations if loc != current_index]
-        
+
         if other_locations:
             return False
         else:
@@ -375,9 +378,7 @@ class CacheArray:
         else:
             return self.cache.mean()
 
-    def update_cache(
-        self, new_value: float | Sequence[float]
-    ) -> None:
+    def update_cache(self, new_value: float | Sequence[float]) -> None:
         """
         update the cache using newest values
         """
@@ -399,11 +400,10 @@ class CacheArray:
         if self.cache.size <= self.least_length:
             logger.debug("Cache is not enough to judge the stability")
             var_stable = False
+        elif var_crit is None:
+            var_stable = self.cache.var() < self.var_crit
         else:
-            if var_crit is None:
-                var_stable = self.cache.var() < self.var_crit
-            else:
-                var_stable = self.cache.var() < var_crit
+            var_stable = self.cache.var() < var_crit
 
         if require_cache:
             return {"cache": self.cache, "mean": self.mean, "if_stable": var_stable}
@@ -452,6 +452,7 @@ def match_with_tolerance(
     - suffixes: the suffixes for the columns of the two dataframes
     """
     import pandas as pd
+
     df1 = df1.sort_values(by=target_axis).reset_index(drop=True)
     df2 = df2.sort_values(by=target_axis).reset_index(drop=True)
 
@@ -501,6 +502,7 @@ def symmetrize(
     - pd.DataFrame[1]: the antisymmetric part (col names are suffixed with "_antisym")
     """
     import pandas as pd
+
     if not isinstance(obj_col, (tuple, list)):
         obj_col = [obj_col]
     # Separate the negative and positive parts for interpolation
@@ -540,9 +542,8 @@ def symmetrize(
     # return pd.concat([sym_df, antisym_df], axis = 1)
     return sym_df, antisym_df
 
-def extract_longest_monotonic_segment(
-    df: pd.DataFrame, col: str = "I_source"
-) -> pd.DataFrame:
+
+def extract_longest_monotonic_segment(df: pd.DataFrame, col: str = "I_source") -> pd.DataFrame:
     """Extract the longest monotonically increasing or decreasing segment from a DataFrame.
 
     The function identifies contiguous segments where the values in ``col``
@@ -605,7 +606,7 @@ def difference(
     - relative: whether to calculate the relative difference
     - interpolate_method: the method for interpolation, default is "linear"
     """
-    import pandas as pd
+
     logger.validate(len(ori_df) == 2, "ori_df should be a sequence of two elements")
     if isinstance(index_col, (str, float, int)):
         return difference(
@@ -700,9 +701,7 @@ def loop_diff(
     )
 
 
-def identify_direction(
-    ori_df: pd.DataFrame, idx_col: str | float | int, min_count: int = 17
-):
+def identify_direction(ori_df: pd.DataFrame, idx_col: str | float | int, min_count: int = 17):
     """
     Identify the direction of the sweeping column and add another direction column
     (1 for increasing, -1 for decreasing)
@@ -740,6 +739,119 @@ def identify_direction(
     # Assign the filtered directions back to the DataFrame
     df_in["direction"] = filtered_directions
     return df_in
+
+
+def aggregate_by_distance(
+    df: pd.DataFrame,
+    ref_idx: Any,
+    distance_threshold: float,
+    method: Literal["avg", "last", "first"] = "avg",
+) -> pd.DataFrame:
+    df["_group"] = (df[ref_idx].diff().abs() > distance_threshold).cumsum()
+
+    if method == "first":
+        return df.groupby("_group").first().reset_index(drop=True)
+    elif method == "avg":
+        return df.groupby("_group").mean(numeric_only=True).reset_index(drop=True)
+    elif method == "last":
+        return df.groupby("_group").last().reset_index(drop=True)
+    else:
+        raise ValueError(f"Invalid method: {method}")
+
+
+def smooth_irregular_series(
+    df: pd.DataFrame,
+    *,
+    x_col: str,
+    y_col: str,
+    method: Literal["lowess", "bin_median"] = "lowess",
+    frac: float = 0.08,
+    robust_iters: int = 2,
+    num_bins: int = 300,
+) -> pd.DataFrame:
+    """
+    Smooth dense/noisy data when X is unevenly distributed.
+
+    Methods:
+    - ``lowess``: locally weighted linear regression with tricube distance
+      weights and optional robust reweighting against outliers.
+    - ``bin_median``: quantile-bin reduction using median in each bin.
+
+    Returns:
+        A DataFrame with columns ``x``, ``y``, and ``y_smooth`` sorted by x.
+    """
+    import pandas as pd
+
+    logger.validate(x_col in df.columns and y_col in df.columns, "x_col and y_col must exist")
+    logger.validate(len(df) > 2, "Need at least 3 rows for smoothing")
+
+    data = df[[x_col, y_col]].copy()
+    data[x_col] = pd.to_numeric(data[x_col], errors="coerce")
+    data[y_col] = pd.to_numeric(data[y_col], errors="coerce")
+    data = data.dropna(subset=[x_col, y_col]).sort_values(by=x_col).reset_index(drop=True)
+    logger.validate(not data.empty, "No valid numeric rows after coercion")
+
+    x = data[x_col].to_numpy(dtype=float)
+    y = data[y_col].to_numpy(dtype=float)
+    n = len(data)
+
+    if method == "bin_median":
+        bin_count = max(2, min(num_bins, n))
+        # qcut keeps bin populations balanced even when x-spacing is highly uneven.
+        bins = pd.qcut(data[x_col], q=bin_count, duplicates="drop")
+        grouped = data.assign(_bin=bins).groupby("_bin", observed=True, dropna=True)
+        out = grouped.agg({x_col: "median", y_col: "median"}).reset_index(drop=True)
+        out = out.rename(columns={x_col: "x", y_col: "y"})
+        out["y_smooth"] = out["y"]
+        return out[["x", "y", "y_smooth"]]
+
+    logger.validate(method == "lowess", f"Invalid method: {method}")
+    logger.validate(0 < frac <= 1, "frac must be in (0, 1]")
+    logger.validate(robust_iters >= 0, "robust_iters must be >= 0")
+
+    q = max(3, int(np.ceil(frac * n)))
+    yhat = np.empty(n, dtype=float)
+    robust_w = np.ones(n, dtype=float)
+
+    for _ in range(robust_iters + 1):
+        for i in range(n):
+            d = np.abs(x - x[i])
+            h = np.partition(d, q - 1)[q - 1]
+            if h <= 0:
+                h = d.max()
+                if h <= 0:
+                    yhat[i] = y[i]
+                    continue
+
+            u = d / h
+            w = np.where(u < 1, (1 - u**3) ** 3, 0.0) * robust_w
+            if np.all(w <= 0):
+                yhat[i] = y[i]
+                continue
+
+            xw = np.column_stack([np.ones(n), x])
+            sw = np.sqrt(w)
+            xws = xw * sw[:, None]
+            yws = y * sw
+            try:
+                beta, *_ = np.linalg.lstsq(xws, yws, rcond=None)
+                yhat[i] = beta[0] + beta[1] * x[i]
+            except np.linalg.LinAlgError:
+                yhat[i] = np.average(y, weights=w)
+
+        if robust_iters == 0:
+            break
+        r = y - yhat
+        s = np.median(np.abs(r))
+        if s <= 0:
+            break
+        u = r / (6.0 * s)
+        robust_w = np.where(np.abs(u) < 1, (1 - u**2) ** 2, 0.0)
+
+    out = data.rename(columns={x_col: "x", y_col: "y"})
+    out["y_smooth"] = yhat
+    return out[["x", "y", "y_smooth"]]
+
 
 def sph_to_cart(r: float, theta: float, phi: float) -> tuple[float, float, float]:
     """
@@ -782,6 +894,7 @@ def scatter_to_candle(
     are dropped.
     """
     import pandas as pd
+
     logger.validate(
         x_col in scatter_df.columns and y_col in scatter_df.columns,
         "x_col and y_col must exist in DataFrame",
@@ -958,9 +1071,12 @@ def scatter_to_candle(
             ["time", "open", "high", "low", "close"]
         ]
 
+
 if __name__ == "__main__":
-    from pyomnix.utils.data import scatter_to_candle
-    import pandas as pd
     import numpy as np
+    import pandas as pd
+
+    from pyomnix.utils.data import scatter_to_candle
+
     test_df = pd.DataFrame({"x": np.linspace(0, 10, 100), "y": np.sin(np.linspace(0, 10, 100))})
     scatter_to_candle(test_df, x_col="x", y_col="y", interval_mode="val", interval=None)
