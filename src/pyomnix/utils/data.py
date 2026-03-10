@@ -874,21 +874,24 @@ def scatter_to_candle(
     interval_mode: Literal["count", "val"] = "val",
     interval: int | float | str | pd.Timedelta | None = None,
     num_bins: int | None = None,
+    candle_width_ratio: float = 0.8,
     closed: Literal["left", "right"] = "left",
 ) -> pd.DataFrame:
     """
-    Convert scatter data to candlestick OHLC data.
+    Convert scatter line/scatter data to candlestick data.
 
-    Returns a DataFrame with columns: ``time``, ``open``, ``high``, ``low``, ``close``.
+    Returns a DataFrame with columns: ``x``, ``low``, ``high``, ``start``, ``end``, ``width``.
 
     Behavior:
     - interval_mode == "count": group sequentially by fixed point counts per candle.
       ``interval`` should be an int (points per candle). If None, an automatic size
-      is chosen to target ~100 candles.
-    - interval_mode == "val": group by value ranges of ``x_col`` (numeric) or by
-      time windows (datetime-like). For time windows, set ``interval`` to a pandas
-      offset alias (e.g. "1T", "5min") or a ``pd.Timedelta``. If ``interval`` is
-      None, the range is split into ``num_bins`` (default ~100) equal bins.
+      is chosen to target about 100 candles.
+    - interval_mode == "val": group by x-value ranges. For numeric x, ``interval``
+      is the bin width. For datetime-like x, ``interval`` can be a pandas offset alias
+      (e.g. ``"5min"``) or a ``pd.Timedelta``. If ``interval`` is None, the total
+      x-range is split into ``num_bins`` equal bins.
+    - ``x`` is the midpoint of each candle interval.
+    - ``width`` is ``candle_width_ratio * interval_length``.
 
     Handles numeric and timestamp x-values. Rows that cannot be parsed (NaN/NaT)
     are dropped.
@@ -899,20 +902,31 @@ def scatter_to_candle(
         x_col in scatter_df.columns and y_col in scatter_df.columns,
         "x_col and y_col must exist in DataFrame",
     )
+    logger.validate(
+        0 < candle_width_ratio <= 1,
+        "candle_width_ratio must be in (0, 1]",
+    )
 
     df = scatter_df[[x_col, y_col]].copy()
     df = df.dropna(subset=[x_col, y_col])
     if df.empty:
-        return pd.DataFrame(columns=["time", "open", "high", "low", "close"]).copy()
+        return pd.DataFrame(columns=["x", "low", "high", "start", "end", "width"]).copy()
 
-    def _agg_group(g: pd.DataFrame, x_name: str, y_name: str) -> dict[str, Any]:
+    def _midpoint(left: Any, right: Any) -> Any:
+        return left + (right - left) / 2
+
+    def _scaled_width(left: Any, right: Any) -> Any:
+        return (right - left) * candle_width_ratio
+
+    def _agg_group(g: pd.DataFrame, x_name: str, y_name: str, *, x_value: Any, width: Any) -> dict[str, Any]:
         g_sorted = g.sort_values(by=x_name)
         return {
-            "time": g_sorted[x_name].iloc[0],
-            "open": g_sorted[y_name].iloc[0],
-            "high": g_sorted[y_name].max(),
+            "x": x_value,
             "low": g_sorted[y_name].min(),
-            "close": g_sorted[y_name].iloc[-1],
+            "high": g_sorted[y_name].max(),
+            "start": g_sorted[y_name].iloc[0],
+            "end": g_sorted[y_name].iloc[-1],
+            "width": width,
         }
 
     if interval_mode == "count":
@@ -927,18 +941,51 @@ def scatter_to_candle(
 
         group_ids = (np.arange(n) // window_size).astype(int)
         grouped = df_sorted.groupby(group_ids, dropna=False)
-        records = [_agg_group(g, x_col, y_col) for _, g in grouped if not g.empty]
+        x_values = df_sorted[x_col].to_list()
+        positive_diffs = []
+        for i in range(1, n):
+            diff = x_values[i] - x_values[i - 1]
+            if diff > 0:
+                positive_diffs.append(diff)
+        default_step: Any = positive_diffs[len(positive_diffs) // 2] if positive_diffs else 1.0
+
+        records = []
+        group_starts = list(range(0, n, window_size))
+        for group_no, start_idx in enumerate(group_starts):
+            end_idx = min(start_idx + window_size, n) - 1
+            g = grouped.get_group(group_no)
+            left_edge = x_values[start_idx]
+            if group_no + 1 < len(group_starts):
+                right_edge = x_values[group_starts[group_no + 1]]
+            elif len(group_starts) == 1:
+                span = x_values[-1] - x_values[0]
+                right_edge = x_values[0] + (span if span > 0 else default_step)
+            else:
+                right_edge = x_values[end_idx] + default_step
+            records.append(
+                _agg_group(
+                    g,
+                    x_col,
+                    y_col,
+                    x_value=_midpoint(left_edge, right_edge),
+                    width=_scaled_width(left_edge, right_edge),
+                )
+            )
         result = pd.DataFrame.from_records(records)  # type: ignore
-        result = result.sort_values(by="time").reset_index(drop=True)
-        result.rename(columns={"time": "time"}, inplace=True)
-        return result[["time", "open", "high", "low", "close"]]
+        result = result.sort_values(by="x").reset_index(drop=True)
+        return result[["x", "low", "high", "start", "end", "width"]]
 
     # interval_mode == "val": determine whether x is datetime-like or numeric
     is_datetime = pd.api.types.is_datetime64_any_dtype(df[x_col])
     x_dt = None
-    if not is_datetime:
+    if not is_datetime and (
+        pd.api.types.is_object_dtype(df[x_col])
+        or pd.api.types.is_string_dtype(df[x_col])
+        or interval_mode == "val"
+        and isinstance(interval, (str, pd.Timedelta))
+    ):
         # Try coercing to datetime to detect timestamp-like values
-        x_try = pd.to_datetime(df[x_col], errors="coerce", utc=False, infer_datetime_format=True)
+        x_try = pd.to_datetime(df[x_col], errors="coerce", utc=False)
         if not x_try.isna().all():
             is_datetime = True
             x_dt = x_try
@@ -953,7 +1000,7 @@ def scatter_to_candle(
         df_t = df.loc[valid_mask].copy()
         df_t["__x"] = x_dt.loc[valid_mask].astype("datetime64[ns]")
         if df_t.empty:
-            return pd.DataFrame(columns=["time", "open", "high", "low", "close"]).copy()
+            return pd.DataFrame(columns=["x", "low", "high", "start", "end", "width"]).copy()
 
         df_t = df_t.sort_values(by="__x")
         if interval is not None:
@@ -961,22 +1008,22 @@ def scatter_to_candle(
             freq = interval
             s = df_t.set_index("__x")[y_col]
             ohlc = s.resample(freq, origin="start_day").ohlc()
-            ohlc.index.name = "time"
             ohlc = ohlc.dropna(how="all")
             out = ohlc.reset_index()
-            return out.rename(
-                columns={"open": "open", "high": "high", "low": "low", "close": "close"}
-            )[["time", "open", "high", "low", "close"]]
+            delta = pd.to_timedelta(freq)
+            out["x"] = out["__x"] + delta / 2
+            out["width"] = delta * candle_width_ratio
+            return out.rename(columns={"open": "start", "close": "end"})[
+                ["x", "low", "high", "start", "end", "width"]
+            ]
         else:
             # Bin the overall time span into equal bins
             target_bins = num_bins if (isinstance(num_bins, int) and num_bins > 0) else 100
             start = df_t["__x"].min()
             end = df_t["__x"].max()
             if start == end:
-                # Single timestamp: one candle
-                rec = _agg_group(df_t, "__x", y_col)
-                rec["time"] = start
-                return pd.DataFrame([rec], columns=["time", "open", "high", "low", "close"]).copy()
+                rec = _agg_group(df_t, "__x", y_col, x_value=start, width=pd.Timedelta(0))
+                return pd.DataFrame([rec], columns=["x", "low", "high", "start", "end", "width"]).copy()
             bins = pd.date_range(start=start, end=end, periods=target_bins + 1)
             cats = pd.cut(
                 df_t["__x"],
@@ -986,24 +1033,30 @@ def scatter_to_candle(
             )
             df_t["__bin"] = cats
             records = []
-            for _, g in df_t.groupby("__bin", dropna=True):
+            for _, g in df_t.groupby("__bin", dropna=True, observed=False):
                 if g.empty:
                     continue
-                rec = _agg_group(g, "__x", y_col)
-                # Label time by bin left or right edge
                 interval_obj = g["__bin"].iloc[0]
-                rec["time"] = interval_obj.left if closed == "left" else interval_obj.right
+                left_edge = interval_obj.left
+                right_edge = interval_obj.right
+                rec = _agg_group(
+                    g,
+                    "__x",
+                    y_col,
+                    x_value=_midpoint(left_edge, right_edge),
+                    width=_scaled_width(left_edge, right_edge),
+                )
                 records.append(rec)
             out = pd.DataFrame.from_records(records)
-            return out.sort_values(by="time").reset_index(drop=True)[
-                ["time", "open", "high", "low", "close"]
+            return out.sort_values(by="x").reset_index(drop=True)[
+                ["x", "low", "high", "start", "end", "width"]
             ]
 
     # Numeric value-based grouping
     x_num = pd.to_numeric(df[x_col], errors="coerce")
     df_n = df.loc[~x_num.isna()].copy()
     if df_n.empty:
-        return pd.DataFrame(columns=["time", "open", "high", "low", "close"]).copy()
+        return pd.DataFrame(columns=["x", "low", "high", "start", "end", "width"]).copy()
     df_n["__x"] = x_num.loc[df_n.index]
     df_n = df_n.sort_values(by="__x")
 
@@ -1016,9 +1069,8 @@ def scatter_to_candle(
         x_min = df_n["__x"].min()
         x_max = df_n["__x"].max()
         if x_min == x_max:
-            rec = _agg_group(df_n, "__x", y_col)
-            rec["time"] = x_min
-            return pd.DataFrame([rec], columns=["time", "open", "high", "low", "close"]).copy()
+            rec = _agg_group(df_n, "__x", y_col, x_value=x_min, width=0.0)
+            return pd.DataFrame([rec], columns=["x", "low", "high", "start", "end", "width"]).copy()
         start_edge = np.floor(x_min / width) * width
         end_edge = np.ceil(x_max / width) * width
         # Ensure inclusive end by adding one step
@@ -1031,25 +1083,31 @@ def scatter_to_candle(
         )
         df_n["__bin"] = cats
         records = []
-        for _, g in df_n.groupby("__bin", dropna=True):
+        for _, g in df_n.groupby("__bin", dropna=True, observed=False):
             if g.empty:
                 continue
-            rec = _agg_group(g, "__x", y_col)
             interval_obj = g["__bin"].iloc[0]
-            rec["time"] = float(interval_obj.left if closed == "left" else interval_obj.right)
+            left_edge = float(interval_obj.left)
+            right_edge = float(interval_obj.right)
+            rec = _agg_group(
+                g,
+                "__x",
+                y_col,
+                x_value=_midpoint(left_edge, right_edge),
+                width=_scaled_width(left_edge, right_edge),
+            )
             records.append(rec)
         out = pd.DataFrame.from_records(records)
-        return out.sort_values(by="time").reset_index(drop=True)[
-            ["time", "open", "high", "low", "close"]
+        return out.sort_values(by="x").reset_index(drop=True)[
+            ["x", "low", "high", "start", "end", "width"]
         ]
     else:
         target_bins = num_bins if (isinstance(num_bins, int) and num_bins > 0) else 100
         x_min = df_n["__x"].min()
         x_max = df_n["__x"].max()
         if x_min == x_max:
-            rec = _agg_group(df_n, "__x", y_col)
-            rec["time"] = x_min
-            return pd.DataFrame([rec], columns=["time", "open", "high", "low", "close"]).copy()
+            rec = _agg_group(df_n, "__x", y_col, x_value=x_min, width=0.0)
+            return pd.DataFrame([rec], columns=["x", "low", "high", "start", "end", "width"]).copy()
         edges = np.linspace(x_min, x_max, target_bins + 1)
         cats = pd.cut(
             df_n["__x"],
@@ -1059,16 +1117,23 @@ def scatter_to_candle(
         )
         df_n["__bin"] = cats
         records = []
-        for _, g in df_n.groupby("__bin", dropna=True):
+        for _, g in df_n.groupby("__bin", dropna=True, observed=False):
             if g.empty:
                 continue
-            rec = _agg_group(g, "__x", y_col)
             interval_obj = g["__bin"].iloc[0]
-            rec["time"] = float(interval_obj.left if closed == "left" else interval_obj.right)
+            left_edge = float(interval_obj.left)
+            right_edge = float(interval_obj.right)
+            rec = _agg_group(
+                g,
+                "__x",
+                y_col,
+                x_value=_midpoint(left_edge, right_edge),
+                width=_scaled_width(left_edge, right_edge),
+            )
             records.append(rec)
         out = pd.DataFrame.from_records(records)
-        return out.sort_values(by="time").reset_index(drop=True)[
-            ["time", "open", "high", "low", "close"]
+        return out.sort_values(by="x").reset_index(drop=True)[
+            ["x", "low", "high", "start", "end", "width"]
         ]
 
 

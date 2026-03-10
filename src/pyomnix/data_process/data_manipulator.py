@@ -1357,6 +1357,13 @@ class DataManipulator:
         # Normalize columns to lower-case for flexible matching
         df = candledf.copy()
         df.columns = [str(c).strip().lower() for c in df.columns]
+        df = df.rename(
+            columns={
+                "x": "time",
+                "start": "open",
+                "end": "close",
+            }
+        )
 
         required_cols = ["time", "open", "high", "low", "close"]
         missing = [c for c in required_cols if c not in df.columns]
