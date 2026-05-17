@@ -110,7 +110,7 @@ class DataManipulator:
         self._marker_toggle_threshold: int = 20000
         self._disable_hover_threshold: int = 10000
         self._kaleido_instance = None
-        self._kaleido_lock = threading.Lock()
+        self._figure_lock = threading.Lock()  # protects go_f during concurrent read/write
         self._save_loop = None
 
     def get_dash_port(self) -> int | None:
@@ -1096,6 +1096,7 @@ class DataManipulator:
             plot_path = Path(plot_path)
         plot_path.parent.mkdir(parents=True, exist_ok=True)
 
+        import plotly.graph_objects as go
         self._save_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._save_loop)
         import kaleido
@@ -1104,33 +1105,50 @@ class DataManipulator:
 
         try:
             while not self._stop_event.is_set():
-                # Use event-based waiting instead of time.sleep for faster interrupt response
+                # Event-based waiting for faster interrupt response
                 if self._stop_event.wait(timeout=time_interval):
                     break
-                if self._stop_event.is_set():
-                    break
-                with self._kaleido_lock:
-                    try:
-                        self._save_loop.run_until_complete(
-                            self._kaleido_instance.write_fig(
-                                self.go_f, 
-                                path=str(plot_path), 
-                                opts={"format": "png"}
-                            )
+                # Take a snapshot under lock to avoid data races with live_plot_update
+                with self._figure_lock:
+                    if self.go_f is None:
+                        continue
+                    fig_snapshot = go.Figure(self.go_f)
+                try:
+                    self._save_loop.run_until_complete(
+                        self._kaleido_instance.write_fig(
+                            fig_snapshot,
+                            path=str(plot_path),
+                            opts={"format": "png"}
                         )
-                    except asyncio.CancelledError:
-                        # Gracefully handle cancellation during save
-                        logger.warning("Save operation was cancelled")
-                        break
-                    except Exception as e:
-                        logger.warning(f"Failed to save image: {e}")
+                    )
+                except asyncio.CancelledError:
+                    logger.warning("Save operation was cancelled")
+                    break
+                except Exception as e:
+                    logger.warning("Failed to save image: %s", e)
         except (KeyboardInterrupt, SystemExit):
-            # Handle manual interruption gracefully
             pass
-        except Exception:
-            # Catch any other exception during the loop
-            pass
+        except Exception as e:
+            logger.warning("Unexpected error in save loop: %s", e)
         finally:
+            # Always attempt a final save with the most recent data before cleanup
+            try:
+                if (
+                    self.go_f is not None
+                    and self._save_loop is not None
+                    and not self._save_loop.is_closed()
+                ):
+                    with self._figure_lock:
+                        fig_final = go.Figure(self.go_f)
+                    self._save_loop.run_until_complete(
+                        self._kaleido_instance.write_fig(
+                            fig_final,
+                            path=str(plot_path),
+                            opts={"format": "png"}
+                        )
+                    )
+            except Exception as e:
+                logger.warning("Failed to save final image: %s", e)
             self._cleanup_kaleido()
 #            max_retries = 3
 #            retry_delay = 2
@@ -1153,9 +1171,17 @@ class DataManipulator:
         """
         start the thread to save the figure periodically
         """
+        # Stop any previously running save thread before starting a new one
+        if self._thread is not None and self._thread.is_alive():
+            self._stop_event.set()
+            self._thread.join(timeout=10)
+            if self._thread.is_alive():
+                raise RuntimeError("Previous save thread did not stop")
+            self._thread = None
         self._stop_event.clear()
         self._thread = threading.Thread(
-            target=self.save_fig_periodically, args=(plot_path, time_interval)
+            target=self.save_fig_periodically, args=(plot_path, time_interval),
+            daemon=True,  # prevent hanging if stop_saving() is never called
         )
         self._thread.start()
 
@@ -1307,7 +1333,7 @@ class DataManipulator:
         row = ensure_list(row, target_type=int)
         col = ensure_list(col, target_type=int)
         lineno = ensure_list(lineno, target_type=int)
-        with self.go_f.batch_update():
+        with self._figure_lock, self.go_f.batch_update():
             idx_z = 0
             for no, (irow, icol, ilineno) in enumerate(
                 zip(row, col, lineno, strict=False)
