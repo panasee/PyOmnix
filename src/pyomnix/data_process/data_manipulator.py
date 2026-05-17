@@ -668,6 +668,49 @@ class DataManipulator:
         )
         return fig, ax, PlotParam(n_row, n_col, lines_per_fig)
 
+    @staticmethod
+    def init_mosaic_canvas(
+        mosaic: Sequence[Sequence[str]],
+        figsize_x: float,
+        figsize_y: float,
+        sub_adj: tuple[float] = (0.19, 0.13, 0.97, 0.97, 0.2, 0.2),
+        *,
+        lines_per_fig: int = 2,
+        empty_sentinel: str = ".",
+        **kwargs,
+    ) -> tuple[Figure, dict[str, Axes], PlotParam]:
+        """
+        initialize a mosaic canvas, return the fig, axes mapping, and params variables
+
+        Args:
+        - mosaic: the subplot mosaic layout passed to plt.subplot_mosaic
+        - figsize_x: the width of the whole figure in cm
+        - figsize_y: the height of the whole figure in cm
+        - sub_adj: the adjustment of the subplots (left, bottom, right, top, wspace, hspace)
+        - lines_per_fig: the number of lines per figure (used for appointing params)
+        - empty_sentinel: the placeholder for empty mosaic cells
+        - **kwargs: keyword arguments for the plt.subplot_mosaic function
+        """
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplot_mosaic(
+            mosaic,
+            figsize=(figsize_x * CM_TO_INCH, figsize_y * CM_TO_INCH),
+            empty_sentinel=empty_sentinel,
+            **kwargs,
+        )
+        fig.subplots_adjust(
+            left=sub_adj[0],
+            bottom=sub_adj[1],
+            right=sub_adj[2],
+            top=sub_adj[3],
+            wspace=sub_adj[4],
+            hspace=sub_adj[5],
+        )
+        n_row = len(mosaic)
+        n_col = max(len(row) for row in mosaic)
+        return fig, axes, PlotParam(n_row, n_col, lines_per_fig)
+
     #################
     # dynamic plots #
     #################
