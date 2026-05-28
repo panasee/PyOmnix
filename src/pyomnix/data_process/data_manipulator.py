@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Literal, TYPE_CHECKING, Any
@@ -710,6 +710,113 @@ class DataManipulator:
         n_row = len(mosaic)
         n_col = max(len(row) for row in mosaic)
         return fig, axes, PlotParam(n_row, n_col, lines_per_fig)
+
+    @staticmethod
+    def polish_axes(
+        ax: Axes,
+        *,
+        spine_width: float = 0.7,
+        tick_width: float = 0.7,
+        tick_length: float = 4,
+        grid: bool = False,
+    ) -> Axes:
+        """
+        apply the PyOmnix static-plot axis style to an existing axes
+
+        Args:
+        - ax: the axes to polish
+        - spine_width: the width of all four spines
+        - tick_width: the width of major ticks
+        - tick_length: the length of major ticks
+        - grid: whether to show a light background grid
+        """
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+            spine.set_linewidth(spine_width)
+        ax.tick_params(
+            axis="both",
+            which="major",
+            direction="in",
+            top=True,
+            right=True,
+            width=tick_width,
+            length=tick_length,
+        )
+        ax.tick_params(
+            axis="both",
+            which="minor",
+            direction="in",
+            top=True,
+            right=True,
+            width=0.5,
+            length=1.5,
+        )
+        if grid:
+            ax.grid(True, color="0.88", linewidth=0.4)
+        else:
+            ax.grid(False)
+        return ax
+
+    @staticmethod
+    def label_subplots(
+        axes: Axes | Sequence[Axes] | Mapping[str, Axes],
+        labels: Sequence[str] | Mapping[str, str] | None = None,
+        *,
+        x: float = -0.16,
+        y: float = 1.06,
+        fontsize: float | None = None,
+        fontweight: str = "bold",
+        **kwargs,
+    ) -> list:
+        """
+        add panel labels to normal subplot axes or subplot_mosaic axes mappings
+
+        Args:
+        - axes: a single axes, a sequence of axes, or a mosaic axes mapping
+        - labels: labels to draw; mappings label selected mosaic keys
+        - x: label x position in axes coordinates
+        - y: label y position in axes coordinates
+        - fontsize: label font size; defaults to current rcParams font size
+        - fontweight: label font weight
+        - **kwargs: additional keyword arguments for Axes.text
+        """
+        import matplotlib.pyplot as plt
+
+        if isinstance(axes, Mapping):
+            if labels is None:
+                labels = {key: chr(ord("A") + idx) for idx, key in enumerate(axes)}
+            if isinstance(labels, Mapping):
+                label_items = [(axes[key], label) for key, label in labels.items()]
+            else:
+                label_items = list(zip(axes.values(), labels, strict=False))
+        elif hasattr(axes, "ravel"):
+            flat_axes = list(axes.ravel())
+            if labels is None:
+                labels = [chr(ord("A") + idx) for idx, _ in enumerate(flat_axes)]
+            label_items = list(zip(flat_axes, labels, strict=False))
+        elif isinstance(axes, Sequence) and not hasattr(axes, "transAxes"):
+            if labels is None:
+                labels = [chr(ord("A") + idx) for idx, _ in enumerate(axes)]
+            label_items = list(zip(axes, labels, strict=False))
+        else:
+            label = labels if isinstance(labels, str) else labels[0] if labels else "A"
+            label_items = [(axes, label)]
+
+        text_kwargs = {
+            "transform": None,
+            "fontsize": fontsize or plt.rcParams["font.size"],
+            "fontweight": fontweight,
+            "va": "bottom",
+            "ha": "left",
+        }
+        text_kwargs.update(kwargs)
+
+        texts = []
+        for ax, label in label_items:
+            kwargs_for_axis = dict(text_kwargs)
+            kwargs_for_axis["transform"] = ax.transAxes
+            texts.append(ax.text(x, y, label, **kwargs_for_axis))
+        return texts
 
     #################
     # dynamic plots #
