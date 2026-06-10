@@ -1017,6 +1017,7 @@ class DataManipulator:
         line_labels: Sequence[Sequence[Sequence[str]]] | None = None,
         plot_types: Sequence[Sequence[Literal["scatter", "contour", "heatmap"]]]
         | None = None,
+        specs: Sequence[Sequence[dict[str, Any] | None]] | None = None,
         webgl: Literal["off", "on", "auto"] = "auto",
         marker_toggle_threshold: int = 20000,
         disable_hover_threshold: int = 10000,
@@ -1037,6 +1038,7 @@ class DataManipulator:
         - line_labels: the labels of the lines, note the type notation, shape should be (n_rows, n_cols, lines_per_fig)
         - plot_types: the plot types for the lines, the type of plot for each subplot,
                 options include 'scatter' and 'contour', shape should be (n_rows, n_cols)
+        - specs: the subplot specs passed to plotly.subplots.make_subplots
         - browser_open: whether to open the browser automatically(only works when not in jupyter notebook)
         - webgl: choose "on" to always use Scattergl, "off" to always use Scatter, "auto" to switch by point count
         - auto_webgl_threshold: when webgl is "auto", switch to Scattergl if points exceed this number
@@ -1056,14 +1058,23 @@ class DataManipulator:
         # for contour plot, only one "line" is allowed
         traces_per_subplot = [
             [
-                lines_per_fig if plot_types[i][j] == "scatter" else 1
+                0
+                if specs is not None and specs[i][j] is None
+                else lines_per_fig
+                if plot_types[i][j] == "scatter"
+                else 1
                 for j in range(n_cols)
             ]
             for i in range(n_rows)
         ]
         if titles is None:
             titles = [["" for _ in range(n_cols)] for _ in range(n_rows)]
-        flat_titles = [item for sublist in titles for item in sublist]
+        flat_titles = [
+            titles[i][j]
+            for i in range(n_rows)
+            for j in range(n_cols)
+            if specs is None or specs[i][j] is not None
+        ]
         if axes_labels is None:
             axes_labels = [
                 [["" for _ in range(2)] for _ in range(n_cols)] for _ in range(n_rows)
@@ -1090,11 +1101,15 @@ class DataManipulator:
                         self.live_dfs[i][j].append(self.go_f.data[idx])
                         idx += 1
 
-        fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=flat_titles)
+        fig = make_subplots(
+            rows=n_rows, cols=n_cols, subplot_titles=flat_titles, specs=specs
+        )
         data_idx = 0
         self.live_dfs = [[[] for _ in range(n_cols)] for _ in range(n_rows)]
         for i in range(n_rows):
             for j in range(n_cols):
+                if specs is not None and specs[i][j] is None:
+                    continue
                 plot_type = plot_types[i][j]
                 num_traces = traces_per_subplot[i][j]
                 if plot_type == "scatter":

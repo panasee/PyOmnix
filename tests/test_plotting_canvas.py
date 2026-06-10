@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import matplotlib
 
@@ -77,6 +78,31 @@ class TestPlottingCanvas(unittest.TestCase):
         self.assertAlmostEqual(ax.spines["left"].get_linewidth(), 0.7)
         self.assertAlmostEqual(ax.spines["bottom"].get_linewidth(), 0.7)
         plt.close(fig)
+
+    def test_live_plot_init_passes_plotly_specs_and_skips_empty_cells(self) -> None:
+        dm = DataManipulator(1)
+        specs = [[{"rowspan": 2}, {}], [None, {}]]
+        titles = [["main", "side"], ["", "bottom"]]
+
+        with patch.object(DataManipulator, "create_dash"):
+            dm.live_plot_init(
+                2,
+                2,
+                lines_per_fig=1,
+                titles=titles,
+                specs=specs,
+                inline_jupyter=False,
+            )
+
+        self.assertEqual(len(dm.go_f.data), 3)
+        self.assertEqual(len(dm.live_dfs[0][0]), 1)
+        self.assertEqual(len(dm.live_dfs[0][1]), 1)
+        self.assertEqual(len(dm.live_dfs[1][0]), 0)
+        self.assertEqual(len(dm.live_dfs[1][1]), 1)
+        self.assertEqual(
+            [annotation.text for annotation in dm.go_f.layout.annotations],
+            ["main", "side", "bottom"],
+        )
 
 
 if __name__ == "__main__":
