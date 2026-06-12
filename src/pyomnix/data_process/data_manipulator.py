@@ -914,7 +914,7 @@ class DataManipulator:
             self._dash_app = app
         self._dash_app.layout = html.Div(
             [
-                dcc.Graph(id="live-graph", figure=fig),
+                dcc.Graph(id="live-graph", figure=fig, mathjax=True),
                 dcc.Interval(id="interval-component", interval=800, n_intervals=0),
             ]
         )
