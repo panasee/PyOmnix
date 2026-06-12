@@ -669,6 +669,66 @@ class DataManipulator:
         return fig, ax, PlotParam(n_row, n_col, lines_per_fig)
 
     @staticmethod
+    def init_subcanvases(
+        n_row: int,
+        n_col: int,
+        figsize_x: float,
+        figsize_y: float,
+        sub_adj: tuple[float] = (0.19, 0.13, 0.97, 0.97, 0.2, 0.2),
+        *,
+        lines_per_fig: int = 2,
+        subplot_kwargs: Sequence[Sequence[dict[str, Any] | None]] | None = None,
+        **kwargs,
+    ) -> tuple[Figure, np.ndarray, PlotParam]:
+        """
+        initialize a canvas by adding subplots one by one, return the fig, axes array, and params
+
+        Args:
+        - n_row: the fig no. of rows
+        - n_col: the fig no. of columns
+        - figsize_x: the width of the whole figure in cm
+        - figsize_y: the height of the whole figure in cm
+        - sub_adj: the adjustment of the subplots (left, bottom, right, top, wspace, hspace)
+        - lines_per_fig: the number of lines per figure (used for appointing params)
+        - subplot_kwargs: per-subplot keyword arguments passed to Figure.add_subplot,
+          shaped as (n_row, n_col); use None or {} for a default subplot
+        - **kwargs: keyword arguments for the plt.figure function
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        if n_row < 1 or n_col < 1:
+            raise ValueError("n_row and n_col must be positive")
+        if subplot_kwargs is not None:
+            if len(subplot_kwargs) != n_row:
+                raise ValueError("subplot_kwargs must have n_row rows")
+            for row_kwargs in subplot_kwargs:
+                if len(row_kwargs) != n_col:
+                    raise ValueError("subplot_kwargs rows must each have n_col entries")
+
+        fig = plt.figure(
+            figsize=(figsize_x * CM_TO_INCH, figsize_y * CM_TO_INCH),
+            **kwargs,
+        )
+        axes = np.empty((n_row, n_col), dtype=object)
+        for i in range(n_row):
+            for j in range(n_col):
+                cell_kwargs = {}
+                if subplot_kwargs is not None:
+                    cell_kwargs = subplot_kwargs[i][j] or {}
+                axes[i, j] = fig.add_subplot(n_row, n_col, i * n_col + j + 1, **cell_kwargs)
+
+        fig.subplots_adjust(
+            left=sub_adj[0],
+            bottom=sub_adj[1],
+            right=sub_adj[2],
+            top=sub_adj[3],
+            wspace=sub_adj[4],
+            hspace=sub_adj[5],
+        )
+        return fig, axes, PlotParam(n_row, n_col, lines_per_fig)
+
+    @staticmethod
     def init_mosaic_canvas(
         mosaic: Sequence[Sequence[str]],
         figsize_x: float,

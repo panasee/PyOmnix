@@ -42,6 +42,22 @@ class TestPlottingCanvas(unittest.TestCase):
         self.assertEqual(params.shape, (1, 1, 2))
         plt.close(fig)
 
+    def test_init_subcanvas_supports_per_subplot_projection_kwargs(self) -> None:
+        fig, axes, params = DataManipulator.init_subcanvas(
+            1,
+            2,
+            10,
+            5,
+            subplot_kwargs=[[{}, {"projection": "polar"}]],
+        )
+
+        self.assertEqual(axes.shape, (1, 2))
+        self.assertIsInstance(axes[0, 0], Axes)
+        self.assertEqual(axes[0, 1].name, "polar")
+        self.assertIsInstance(params, PlotParam)
+        self.assertEqual(params.shape, (1, 2, 2))
+        plt.close(fig)
+
     def test_label_subplots_supports_mosaic_axes_mapping(self) -> None:
         fig, axes, _ = DataManipulator.init_mosaic_canvas(
             [["main", "side"], ["main", "bottom"]],
