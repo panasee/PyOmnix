@@ -1069,7 +1069,7 @@ class DataManipulator:
         n_rows: int,
         n_cols: int,
         lines_per_fig: int = 2,
-        pixel_height: float = 600,
+        pixel_height: float = 1000,
         pixel_width: float = 1200,
         *,
         titles: Sequence[Sequence[str]] | None = None,
