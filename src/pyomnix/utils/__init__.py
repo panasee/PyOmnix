@@ -5,6 +5,7 @@ This module re-exports commonly used utility functions for convenience.
 """
 
 from .files import ShPath
+from .events import branch_difference, label_plateaus, summarize_events
 from .data import (
     CacheArray,
     ObjectArray,
