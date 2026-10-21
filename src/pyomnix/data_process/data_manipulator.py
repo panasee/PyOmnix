@@ -94,6 +94,8 @@ class DataManipulator:
         }
         if plot_params is None:
             plot_params = dims
+        elif isinstance(plot_params, int):
+            plot_params = (plot_params,)
         self.params = PlotParam(*plot_params)
         # dynamic plotting
         self.live_dfs: list[list[list[go.Scatter]]] = []

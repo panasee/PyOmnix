@@ -119,9 +119,12 @@ def convert_unit(
     elif isinstance(before, (np.integer, np.floating)):
         return convert_unit(float(before), target_unit)
     elif isinstance(before, (list, tuple, np.ndarray)):
-        return [convert_unit(i, target_unit)[0] for i in before], [
-            convert_unit(i, target_unit)[1] for i in before
-        ]
+        values, labels = [], []
+        for item in before:
+            value, label = convert_unit(item, target_unit)
+            values.append(value)
+            labels.append(label)
+        return values, labels
 
 
 def get_unit_factor_and_texname(unit: str) -> tuple[float, str]:
