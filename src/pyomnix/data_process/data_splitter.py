@@ -87,9 +87,22 @@ class DataSplitter:
         col = work[field_col]
         vals = np.asarray(col)
         mask = pd.notna(vals)
+        valid_positions = np.flatnonzero(mask)
         work = work.loc[mask].reset_index(drop=True)
 
         n_rows = len(work)
+        if n_rows == 0:
+            return []
+
+        def original_positions(segments):
+            # Keep positions relative to the original frame passed to split().
+            # Invalid rows remain in the corresponding segment, not silently lost.
+            return [SweepSegment(
+                0 if seg.start_index == 0 else int(valid_positions[seg.start_index]),
+                len(df) if seg.end_index == n_rows else int(valid_positions[seg.end_index]),
+                seg.direction,
+            ) for seg in segments]
+
         if n_rows < max(2 * min_points, 5):
             # Not enough rows to form multiple segments; single segment only
             logger.debug(
@@ -97,7 +110,7 @@ class DataSplitter:
                 n_rows,
             )
             direction = self._overall_direction(work[field_col].to_numpy())
-            return [SweepSegment(0, n_rows, direction)]
+            return original_positions([SweepSegment(0, n_rows, direction)])
 
         # First derivative and smoothing to reduce noise
         diff = work[field_col].diff()
@@ -156,7 +169,7 @@ class DataSplitter:
             segments = [SweepSegment(0, n_rows, direction)]
 
         logger.debug("Detected %d sweep segment(s)", len(segments))
-        return segments
+        return original_positions(segments)
 
     def split_dataframe_by_segments(
         self,
@@ -169,8 +182,8 @@ class DataSplitter:
 
         Args:
             df: Original dataframe (not modified)
-            segments: Segment definitions w.r.t. the dataframe order after
-                NaN drop and index reset performed in detection
+            segments: Segment definitions in original dataframe row positions.
+                Invalid coordinate rows ignored during detection remain here.
             reset_index: If True, reset index for each segment dataframe
 
         Returns:
