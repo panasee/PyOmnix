@@ -324,6 +324,49 @@ class DataManipulator:
         ax.legend(edgecolor="black", prop=self.legend_font)
         return fig, ax
 
+    def plot_parameter_series(
+        self, dfs, parameter_values, *, x: str, y: str,
+        ax=None, cmap="viridis", norm=None, colorbar_label: str = "",
+        **plot_kwargs,
+    ):
+        """Plot a family of curves with the SAME normalization as its colorbar.
+
+        Return (fig, ax, lines, colorbar). Values are numeric parameters, one per
+        frame; repeated values are allowed. Pass axes to retain full Matplotlib
+        control. Unit conversion remains explicit in input data.
+        """
+        from matplotlib import colormaps
+        from matplotlib.cm import ScalarMappable
+        from matplotlib.colors import Normalize
+        import numpy as np
+
+        dfs = list(dfs)
+        values = np.asarray(list(parameter_values), dtype=float)
+        if values.ndim != 1 or not len(dfs) or len(dfs) != len(values) or not np.isfinite(values).all():
+            logger.raise_error("one finite parameter value is required per frame", ValueError, include_traceback=False)
+        if "color" in plot_kwargs or "c" in plot_kwargs:
+            logger.raise_error("curve colors are determined by parameter_values", ValueError, include_traceback=False)
+        for frame in dfs:
+            if x not in frame or y not in frame:
+                logger.raise_error(f"frames must contain {x!r} and {y!r}", KeyError, include_traceback=False)
+        cmap = colormaps.get_cmap(cmap)
+        if norm is None:
+            norm = Normalize(vmin=float(values.min()), vmax=float(values.max()))
+        norm.autoscale_None(values)
+        if ax is None:
+            fig, ax, _ = self.init_canvas(1, 1, 10, 6)
+        else:
+            fig = ax.figure
+        mappable = ScalarMappable(norm=norm, cmap=cmap)
+        mappable.set_array(values)
+        # Colorbar may adjust equal bounds; construct it before coloring lines.
+        colorbar = fig.colorbar(mappable, ax=ax)
+        colorbar.set_label(colorbar_label)
+        lines = []
+        for frame, value in zip(dfs, values, strict=True):
+            lines.extend(ax.plot(frame[x], frame[y], color=cmap(norm(value)), **plot_kwargs))
+        return fig, ax, lines, colorbar
+
     def plot_mapping(
         self,
         mapping_x: Any,
