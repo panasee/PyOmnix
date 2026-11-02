@@ -1070,7 +1070,8 @@ class DataManipulator:
             spikethickness=0.9,
         )
 
-    def create_dash(self, fig: go.Figure, *, port: int = 11235, browser_open: bool = False) -> None:
+    def create_dash(self, fig: go.Figure, *, port: int = 11235, browser_open: bool = False,
+                    refresh_interval_ms: int = 800) -> None:
         """
         update the figure for dash
         """
@@ -1078,6 +1079,8 @@ class DataManipulator:
         from dash.dependencies import Input, Output
         import plotly.graph_objects as go
         from waitress import create_server
+        if not isinstance(refresh_interval_ms, int) or refresh_interval_ms < 1:
+            raise ValueError("refresh_interval_ms must be a positive integer")
         logging.getLogger("waitress").setLevel(logging.ERROR)
 
         if not self._dash_app:
@@ -1086,7 +1089,7 @@ class DataManipulator:
         self._dash_app.layout = html.Div(
             [
                 dcc.Graph(id="live-graph", figure=fig, mathjax=True),
-                dcc.Interval(id="interval-component", interval=800, n_intervals=0),
+                dcc.Interval(id="interval-component", interval=refresh_interval_ms, n_intervals=0),
             ]
         )
 
@@ -1097,7 +1100,8 @@ class DataManipulator:
             prevent_initial_call=False,
         )
         def update_graph(_, relayout_data):
-            fig_to_return = go.Figure(fig)
+            with self._figure_lock:
+                fig_to_return = go.Figure(fig)
             if relayout_data:
                 layout_update = {}
                 for key, value in relayout_data.items():
@@ -1194,6 +1198,8 @@ class DataManipulator:
         disable_hover_threshold: int = 10000,
         browser_open: bool = False,
         inline_jupyter: bool = True,
+        show: bool = True,
+        refresh_interval_ms: int = 800,
     ) -> None:
         """
         initialize the real-time plotter using plotly
@@ -1215,6 +1221,8 @@ class DataManipulator:
         - auto_webgl_threshold: when webgl is "auto", switch to Scattergl if points exceed this number
         - marker_toggle_threshold: above this point count, switch to mode="lines" (no markers)
         - disable_hover_threshold: above this point count, set hoverinfo="skip" to reduce hover cost
+        - show: False creates the same live figure without display or a server (for replay/tests)
+        - refresh_interval_ms: Dash display polling interval; acquisition may be faster
         """
         import plotly.graph_objects as go
         from plotly.subplots import make_subplots
@@ -1351,6 +1359,12 @@ class DataManipulator:
                     raise ValueError(
                         f"Unsupported plot type '{plot_type}' at subplot ({i},{j})"
                     )
+                if plot_type in {"heatmap", "contour"} and n_rows * n_cols > 1:
+                    subplot = fig.get_subplot(i + 1, j + 1)
+                    _, x1 = subplot.xaxis.domain
+                    y0, y1 = subplot.yaxis.domain
+                    fig.data[-1].update(colorbar=dict(x=x1, xanchor="left", xpad=4,
+                        y=(y0 + y1) / 2, len=y1-y0, thickness=12))
                 fig.update_xaxes(title_text=axes_labels[i][j][0], row=i + 1, col=j + 1)
                 fig.update_yaxes(title_text=axes_labels[i][j][1], row=i + 1, col=j + 1)
 
@@ -1359,7 +1373,10 @@ class DataManipulator:
             height=pixel_height,
             width=pixel_width,
         )
-        if is_notebook() and inline_jupyter:
+        if not show:
+            self.go_f = fig
+            update_to_live_dfs()
+        elif is_notebook() and inline_jupyter:
             browser_open = False
             from IPython.display import display
 
@@ -1375,7 +1392,8 @@ class DataManipulator:
                 logger.debug(
                     "inline_jupyter is not supported in non-notebook environment"
                 )
-            self.create_dash(self.go_f, port=11235, browser_open=browser_open)
+            self.create_dash(self.go_f, port=11235, browser_open=browser_open,
+                             refresh_interval_ms=refresh_interval_ms)
 
     def save_fig_periodically(
         self, plot_path: Path | str, time_interval: int = 60
@@ -1523,185 +1541,221 @@ class DataManipulator:
 
     def live_plot_update(
         self,
-        row: int | tuple[int],
-        col: int | tuple[int],
-        lineno: int | tuple[int],
-        x_data: Sequence[float | str]
-        | Sequence[Sequence[float | str]]
-        | np.ndarray[float | str],
-        y_data: Sequence[float | str]
-        | Sequence[Sequence[float | str]]
-        | np.ndarray[float | str]
-        | None = None,
-        z_data: Sequence[float | str]
-        | Sequence[Sequence[float | str]]
-        | np.ndarray[float | str] = (0,),
+        row: int | np.integer | Sequence[int] | NDArray[np.integer],
+        col: int | np.integer | Sequence[int] | NDArray[np.integer],
+        lineno: int | np.integer | Sequence[int] | NDArray[np.integer],
+        x_data: ArrayLike | pd.DataFrame | GridData
+        | Sequence[ArrayLike | pd.DataFrame | GridData],
+        y_data: ArrayLike | Sequence[ArrayLike | None] | None = None,
+        z_data: ArrayLike | Sequence[ArrayLike] = (0,),
         *,
-        incremental=False,
-        max_points: int | None = None,
+        incremental: bool = False,
+        max_points: int | np.integer | None = None,
         with_str: bool = False,
     ) -> None:
-        """
-        update the live data in jupyter, the row, col, lineno all can be tuples to update multiple subplots at the
-        same time. Note that this function is not appending datapoints, but replot the whole line, so provide the
-        whole data array for each update. The row, col, lineno, x_data, y_data should be of same length (no. of lines
-        plotted). Be careful about the correspondence of data and index, e.g. when given indices like (0,1), the data
-        should be like [[0],[1]], instead of [0,1] (incremental case).
-        Example: live_plot_update((0,1), (0,1), (0,1), [x_arr1, x_arr2], [y_arr1, y_arr2]) will
-        plot the (0,0,0) line with x_arr1 and y_arr1, and (1,1,1) line with x_arr2 and y_arr2
-        SET data to empty list [] to clear the figure
+        """Update selected live traces, validating all shapes before mutation.
 
-        Args:
-        - row: the row of the subplot (from 0)
-        - col: the column of the subplot (from 0)
-        - lineno: the line no. of the subplot (from 0)
-        - x_data: the array-like x data (not support single number, use [x] or (x,) instead)
-        - y_data: the array-like y data (not support single number, use [y] or (y,) instead), if None, x_data should be candlestick dataframe or list of candlestick dataframes
-        - z_data: the array-like z data (for contour plot only, be the same length as no of contour plots)
-        - incremental: whether to update the data incrementally
-        - max_points: the maximum number of points to be plotted, if None, no limit, only affect incremental line plots
-        - with_str: whether there are strings (mainly for time string) in data. There will be no order for string data,
-                   the string data will just be plotted evenly spaced
+        Scalar indices address one trace; tuple indices address parallel lists
+        of trace inputs (ragged lengths are supported). Heatmaps and contours
+        accept a GridData as x_data, or 1-D center coordinates X/Y and a 2-D Z
+        matrix of shape (len(Y), len(X)). Maps always replace their data with
+        rows along Y and columns along X (transpose=False). For point/row scans,
+        update a GridData, then pass it with incremental=False.
+
+        Lines accept full replacements or incremental points/batches. Existing
+        candlestick dataframe calls keep their replacement behavior.
+        Incremental lines accept text and date coordinates without with_str for
+        legacy compatibility; numeric strings are still converted to numbers.
+        For one selected map, pass GridData or Z directly, without a one-item
+        wrapper. GridData requires y_data=None. z_data supplies only raw maps:
+        one matrix for one raw map, or a list of matrices for multiple raw maps.
+        Caller-provided customdata is left untouched.
+        Live maps use calibrated coordinates when they form independent,
+        strictly monotonic X/Y axes. Other calibrated meshes raise before any
+        trace changes; use plot_mapping for non-rectilinear grids.
         """
+        from datetime import date
+
         import numpy as np
-        import pandas as pd
 
+        if self.go_f is None:
+            raise RuntimeError("call live_plot_init before updating traces")
+        targets = []
+        for values in (row, col, lineno):
+            arr = np.atleast_1d(values)
+            if arr.ndim != 1 or not np.issubdtype(arr.dtype, np.integer):
+                raise ValueError(
+                    "row, col and lineno must be integers or one-dimensional integer sequences"
+                )
+            targets.append(arr)
+        if not len(targets[0]) or len({len(a) for a in targets}) != 1:
+            raise ValueError("row, col and lineno must have the same nonzero length")
+        locations = list(zip(*targets, strict=True))
+        if len(set(locations)) != len(locations):
+            raise ValueError("a batch must not target the same trace twice")
+        traces = []
+        for r, c, line in locations:
+            if (r < 0 or r >= len(self.live_dfs) or c < 0 or c >= len(self.live_dfs[r])
+                    or line < 0 or line >= len(self.live_dfs[r][c])):
+                raise IndexError("live trace index out of range")
+            traces.append(self.live_dfs[r][c][line])
+        if max_points is not None and (
+            isinstance(max_points, bool)
+            or not isinstance(max_points, (int, np.integer))
+            or max_points < 1
+        ):
+            raise ValueError("max_points must be a positive integer")
         if not incremental and max_points is not None:
             logger.warning("max_points will be ignored when incremental is False")
 
-        def ensure_list(data, target_type: type = np.float32) -> np.ndarray:
-            def try_type(x):
-                try:
-                    return target_type(x)
-                except (ValueError, TypeError):
-                    return x
-
-            if isinstance(data, (list, tuple, np.ndarray, pd.Series, pd.DataFrame)):
-                return np.array([try_type(i) for i in data])
+        def split(data: Any, count: int, *, unwrap_objects: bool = False) -> list[Any]:
+            if count == 1:
+                inputs = [data]
+            elif data is None:
+                inputs = [None] * count
             else:
-                return np.array([try_type(data)])
-
-        def ensure_2d_array(data, if_with_str=False) -> np.ndarray:
-            data_arr = ensure_list(data)
-            if data_arr.size == 0:
-                return data_arr
-            if not isinstance(data_arr[0], np.ndarray):
-                if if_with_str:
-                    return np.array([data_arr])
-                return np.array([data_arr], dtype=np.float32)
-            else:
-                if if_with_str:
-                    return np.array(data_arr)
-                return np.array(data_arr, dtype=np.float32)
-
-        if_candle = y_data is None
-        if if_candle:
-            logger.info("y_data is None, using candle_df_filter to get data")
-            if isinstance(x_data, pd.DataFrame):
-                lst_x_data = [x_data]
-            else:
-                lst_x_data = x_data
-            logger.validate(
-                isinstance(lst_x_data, list) or isinstance(lst_x_data, tuple),
-                "provide correct candlestick dataframe or list of candlestick dataframes",
-            )
-            extracted_rows = [self.candle_df_filter(x) for x in lst_x_data]
-            logger.validate(
-                all(row is not None for row in extracted_rows),
-                "Failed to extract data from candlestick dataframe(s)",
-            )
-            extracted = zip(*extracted_rows, strict=True)
-            time_data, open_vals, high_vals, low_vals, close_vals, _ = extracted
-        else:
-            if not incremental:
-                x_data = ensure_2d_array(x_data, with_str)
-                y_data = ensure_2d_array(y_data, with_str)
-                z_data = ensure_2d_array(z_data, with_str)
-            else:
-                x_data = ensure_list(x_data)
-                y_data = ensure_list(y_data)
-                z_data = ensure_list(z_data)
-
-        # dim_tolift = [0, 0, 0]
-        row = ensure_list(row, target_type=int)
-        col = ensure_list(col, target_type=int)
-        lineno = ensure_list(lineno, target_type=int)
-        with self._figure_lock, self.go_f.batch_update():
-            idx_z = 0
-            for no, (irow, icol, ilineno) in enumerate(
-                zip(row, col, lineno, strict=False)
-            ):
-                plot_type = self.plot_types[irow][icol]
-                trace = self.live_dfs[irow][icol][ilineno]
-                if "candle" in plot_type:
-                    logger.validate(
-                        if_candle,
-                        "provide correct candle dataframe, no y_data should be provided",
+                if len(data) != count:
+                    raise ValueError("one data input is required per selected trace")
+                inputs = list(data)
+            if unwrap_objects:
+                # Preserve historical candlestick wrappers. Maps take direct
+                # GridData/matrix inputs; line wrappers are handled by vector().
+                inputs = [
+                    value[0]
+                    if (
+                        isinstance(value, (list, tuple)) and len(value) == 1
+                        and trace.type == "candlestick"
                     )
-                    trace.x = time_data[no]
-                    trace.open = open_vals[no]
-                    trace.high = high_vals[no]
-                    trace.low = low_vals[no]
-                    trace.close = close_vals[no]
-                if plot_type == "scatter" or plot_type == "scattergl":
-                    logger.validate(
-                        not if_candle,
-                        "provide correct scatter data, y_data should be provided",
-                    )
-                    # Decide desired trace type and style based on options and point count
-                    # Toggle markers for dense data to reduce draw calls
+                    else value
+                    for trace, value in zip(traces, inputs, strict=True)
+                ]
+            return inputs
+
+        def vector(data: ArrayLike) -> NDArray:
+            array = np.asarray(data, dtype=None if with_str or incremental else np.float32)
+            if array.ndim == 2 and array.shape[0] == 1:
+                array = array[0]  # Historical single-trace [array] input.
+            array = np.atleast_1d(array)
+            if array.ndim != 1:
+                raise ValueError("line data must be one-dimensional")
+            if incremental and not with_str:
+                if array.dtype.kind in "OUS":
+                    def numeric_or_text(value):
+                        if isinstance(value, (date, np.datetime64)):
+                            return value
+                        try:
+                            return np.float32(value)
+                        except ValueError:
+                            # Legacy incremental axes accept date/category text.
+                            # Only text conversion failures are valid inputs;
+                            # invalid objects and shapes must still raise.
+                            if not isinstance(value, (str, bytes)):
+                                raise
+                            return value
+                    array = np.array([numeric_or_text(value) for value in array])
+                elif array.dtype.kind != "M":
+                    array = array.astype(np.float32, copy=False)
+            if array.dtype.kind == "M":
+                # Preserve datetime scalars: casting nanosecond arrays to
+                # object during concatenation would otherwise produce integers.
+                return np.fromiter(array, dtype=object, count=len(array))
+            return array
+
+        # Plotly figure copies temporarily remove trace.type; protect reads too.
+        with self._figure_lock:
+            xs = split(x_data, len(traces), unwrap_objects=True)
+            ys = split(y_data, len(traces))
+            # GridData already contains Z. Only raw maps consume z_data entries,
+            # even when selected traces also include grids, lines or candlesticks.
+            map_count = sum(t.type in {"heatmap", "contour"} and not isinstance(x, GridData)
+                            for t, x in zip(traces, xs, strict=True))
+            zs = iter(split(z_data, map_count)) if map_count else iter(())
+            prepared = []
+            for trace, x, y in zip(traces, xs, ys, strict=True):
+                if trace.type == "candlestick":
+                    if y is not None:
+                        raise ValueError("candlestick data must be a dataframe without y_data")
+                    extracted = self.candle_df_filter(x)
+                    if extracted is None:
+                        raise ValueError("invalid candlestick dataframe")
+                    candle_fields = ("x", "open", "high", "low", "close")
+                    prepared.append((trace, dict(zip(candle_fields, extracted[:5], strict=True))))
+                    continue
+                is_map = trace.type in {"heatmap", "contour"}
+                if is_map and incremental:
+                    raise ValueError("maps require incremental=False; update GridData first")
+                z_input = next(zs) if is_map and not isinstance(x, GridData) else None
+                if isinstance(x, GridData):
+                    if not is_map or y is not None:
+                        raise ValueError("pass GridData to a map with y_data=None")
+                    update = dict(x=x.x, y=x.y, z=x.z.copy())
+                    update.update(connectgaps=False, hoverongaps=False)
+                    if trace.type == "heatmap":
+                        update["zsmooth"] = False
+                    if x.coordinates is not None:
+                        plot_x, plot_y = x.mesh()
+                        xv, yv = plot_x[0], plot_y[:, 0]
+                        if not (np.all(plot_x == xv) and np.all(plot_y == yv[:, None])):
+                            raise ValueError(
+                                "live maps require rectilinear calibrated coordinates; "
+                                "use plot_mapping for non-rectilinear grids"
+                            )
+                        for axis in (xv, yv):
+                            steps = np.diff(axis)
+                            if not (np.all(steps > 0) or np.all(steps < 0)):
+                                raise ValueError(
+                                    "live maps require strictly monotonic calibrated coordinates"
+                                )
+                        update.update(x=xv, y=yv)
+                    prepared.append((trace, update))
+                    continue
+                if y is None:
+                    raise ValueError("x_data and y_data are required")
+                if is_map:
+                    xv, yv = np.asarray(x), np.asarray(y)
+                    if xv.ndim != 1 or yv.ndim != 1:
+                        raise ValueError("map center coordinates must be one-dimensional")
+                    z = np.asarray(z_input, dtype=float)
+                    if z.ndim != 2 or z.shape != (len(yv), len(xv)):
+                        raise ValueError("map Z must have shape (len(y), len(x))")
+                    update = dict(x=xv, y=yv, z=z)
+                elif trace.type in {"scatter", "scattergl"}:
+                    xv, yv = vector(x), vector(y)
+                    update = dict(x=xv, y=yv)
+                    if len(xv) != len(yv):
+                        raise ValueError("line x/y lengths must match")
                     if incremental:
-                        pts_len = len(trace.x) + 1
-                    else:
-                        pts_len = len(x_data[no])
-                    if pts_len > self._marker_toggle_threshold:
-                        trace.mode = "lines"
-                    else:
-                        trace.mode = "lines+markers"
-                    # Disable hover for extremely dense data to reduce hover computation
-                    if pts_len > self._disable_hover_threshold:
-                        trace.hoverinfo = "skip"
-                        self.go_f.update_layout(hovermode=False)
-                        self.go_f.update_xaxes(showspikes=False)
-                        self.go_f.update_yaxes(showspikes=False)
-                    else:
-                        self.go_f.update_layout(hovermode="x")
-                        self.go_f.update_xaxes(showspikes=True)
-                        self.go_f.update_yaxes(showspikes=True)
-
-                    if incremental:
-                        trace.x = (
-                            np.append(trace.x, x_data[no])[-max_points:]
-                            if max_points is not None
-                            else np.append(trace.x, x_data[no])
-                        )
-                        trace.y = (
-                            np.append(trace.y, y_data[no])[-max_points:]
-                            if max_points is not None
-                            else np.append(trace.y, y_data[no])
-                        )
-                    else:
-                        trace.x = x_data[no]
-                        trace.y = y_data[no]
-                if plot_type == "contour" or plot_type == "heatmap":
-                    logger.validate(
-                        not if_candle,
-                        "provide correct contour/heatmap data, y_data should be provided",
+                        for name in ("x", "y"):
+                            previous = np.asarray(getattr(trace, name))
+                            if previous.dtype.kind == "M":
+                                previous = np.fromiter(previous, dtype=object, count=len(previous))
+                            if previous.size:
+                                update[name] = np.concatenate((previous, update[name]))
+                            if max_points is not None:
+                                update[name] = update[name][-max_points:]
+                    count = len(update["x"])
+                    update["mode"] = (
+                        "lines" if count > self._marker_toggle_threshold else "lines+markers"
                     )
-                    if not incremental:
-                        trace.x = x_data[no]
-                        trace.y = y_data[no]
-                        trace.z = z_data[idx_z]
-                    else:
-                        trace.x = np.append(trace.x, x_data[no])
-                        trace.y = np.append(trace.y, y_data[no])
-                        trace.z = np.append(trace.z, z_data[idx_z])
-                    idx_z += 1
-            assert idx_z == len(z_data) or (idx_z == 0 and z_data == (0,)), (
-                "z_data should have the same length as the number of contour plots"
-            )
-        if not is_notebook() and not incremental:
-            self.go_f.update_layout(uirevision=True)
+                    if count > self._disable_hover_threshold:
+                        update["hoverinfo"] = "skip"
+                    elif trace.hoverinfo == "skip":
+                        update["hoverinfo"] = None
+                else:
+                    raise ValueError(f"unsupported live trace type: {trace.type}")
+                prepared.append((trace, update))
+            with self.go_f.batch_update():
+                for trace, update in prepared:
+                    if trace.type in {"heatmap", "contour"}:
+                        update["transpose"] = False
+                        # FigureWidget sends 2-D arrays as JSON, unlike binary
+                        # 1-D arrays. Represent missing map cells as JSON null.
+                        if hasattr(self.go_f, "comm"):
+                            z = np.asarray(update["z"], dtype=float)
+                            update["z"] = np.where(np.isnan(z), None, z).tolist()
+                    trace.update(update)
+                if self.go_f.layout.uirevision is None:
+                    self.go_f.layout.uirevision = True
 
     def candle_df_filter(self, candledf: pd.DataFrame) -> tuple[np.ndarray, ...] | None:
         """

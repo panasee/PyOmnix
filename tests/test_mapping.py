@@ -242,6 +242,124 @@ def test_select_scan_retains_order_and_breaks_at_directions_and_gaps() -> None:
     assert "_plot_segment" not in frame
 
 
+def live(types: Sequence[str], **kwargs: Any) -> DataManipulator:
+    plot = DataManipulator(1)
+    plot.live_plot_init(1, len(types), 1, plot_types=[types], show=False, **kwargs)
+    return plot
+
+
+@pytest.mark.parametrize("plot_type", ["heatmap", "contour"])
+@pytest.mark.parametrize("shape", [(2, 3), (1, 3), (3, 1), (1, 1)])
+def test_live_map_accepts_matrix(
+    plot_type: str, shape: tuple[int, int],
+) -> None:
+    plot = live([plot_type])
+    rows, cols = shape
+    x, y = np.arange(cols), np.arange(rows)
+    z = np.arange(rows * cols).reshape(shape)
+    plot.live_plot_update(0, 0, 0, x, y, z)
+    np.testing.assert_array_equal(plot.go_f.data[0].z, z)
+    before = plot.go_f.to_json()
+    with pytest.raises(ValueError, match="shape"):
+        plot.live_plot_update(0, 0, 0, x, y, np.zeros((rows + 1, cols)))
+    assert plot.go_f.to_json() == before
+
+
+def test_live_ragged_maps_and_lines_share_atomic_batch() -> None:
+    plot = live(["heatmap", "contour", "scatter"])
+    plot.live_plot_update((0, 0, 0), (0, 1, 2), (0, 0, 0),
+                          [[0, 1, 2], [0, 1], [0, 1, 2, 3]],
+                          [[0, 1], [0, 1, 2], [2, 3, 4, 5]],
+                          [np.ones((2, 3)), np.ones((3, 2))])
+    assert np.shape(plot.go_f.data[0].z) == (2, 3)
+    before = plot.go_f.to_json()
+    with pytest.raises(ValueError, match="match"):
+        plot.live_plot_update((0, 0), (0, 2), (0, 0), [[0, 1], [0, 1]],
+                              [[0, 1], [0]], np.zeros((2, 2)))
+    assert plot.go_f.to_json() == before
+
+
+def test_live_grid_preserves_holes_and_does_not_smooth() -> None:
+    a, b = GridData([0, 1, 2], [0, 1]), GridData([0, 1], [0, 1])
+    a.update(1, 1, 5)
+    plot = live(["heatmap", "contour"])
+    plot.live_plot_update((0, 0), (0, 1), (0, 0), [a, b])
+    assert np.isnan(plot.go_f.data[0].z[0, 0])
+    assert plot.go_f.data[0].z[1, 1] == 5
+    assert plot.go_f.data[0].zsmooth is False
+    assert plot.go_f.data[1].connectgaps is False
+
+
+def test_line_window_does_not_disable_map_hover() -> None:
+    plot = live(["heatmap", "scatter"], disable_hover_threshold=2)
+    grid = GridData([0, 1], [0, 1])
+    grid.update([0, 1], 0, [2, 3])
+    plot.live_plot_update(0, 0, 0, grid)
+    grid.update(0, 1, 4)
+    plot.live_plot_update(0, 0, 0, grid)
+    np.testing.assert_array_equal(plot.go_f.data[0].z, [[2, 3], [4, np.nan]])
+    plot.live_plot_update(0, 1, 0, [0, 1, 2], [3, 4, 5])
+    plot.live_plot_update(0, 1, 0, [3, 4], [6, 7], incremental=True, max_points=3)
+    np.testing.assert_array_equal(plot.go_f.data[1].x, [2, 3, 4])
+    assert plot.go_f.layout.hovermode is not False
+    assert plot.go_f.data[0].hoverinfo != "skip"
+
+
+def test_grid_widget_uses_null_for_missing_cells(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(module, "is_notebook", lambda: True)
+    monkeypatch.setattr("IPython.display.display", lambda figure: None)
+    plot = DataManipulator(1)
+    plot.live_plot_init(1, 1, 1, plot_types=[["heatmap"]])
+    grid = GridData([0, 1], [0, 1])
+    grid.update(0, 0, 2)
+    plot.live_plot_update(0, 0, 0, grid)
+    assert plot.go_f.data[0].z[1][1] is None
+    assert plot.go_f.data[0].z[0][0] == 2
+    assert np.isnan(grid.z[1, 1])
+    plot.go_f.close()
+
+
+def test_map_colorbars_follow_subplot_domains() -> None:
+    plot = DataManipulator(1)
+    plot.live_plot_init(2, 2, 1, plot_types=[["heatmap", "heatmap"], ["contour", "contour"]], show=False)
+    bars = [trace.colorbar for trace in plot.go_f.data]
+    assert bars[0].x < bars[1].x
+    assert bars[0].y > bars[2].y
+    assert all(bar.len < .5 for bar in bars)
+
+
+def test_legacy_multiline_strings_and_clearing() -> None:
+    plot = live(["scatter", "scatter"])
+    plot.live_plot_update((0, 0), (0, 1), (0, 0), [["a", "b"], ["c"]],
+                          [[1, 2], [3]], with_str=True)
+    plot.live_plot_update((0, 0), (0, 1), (0, 0), ["d", "e"], [4, 5],
+                          incremental=True, with_str=True)
+    assert list(plot.go_f.data[0].x) == ["a", "b", "d"]
+    plot.live_plot_update(0, 0, 0, [], [])
+    assert len(plot.go_f.data[0].x) == 0
+
+
+def test_dash_snapshot_retains_direct_edits_and_zoom(monkeypatch: pytest.MonkeyPatch) -> None:
+    class IdleThread:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+        def start(self) -> None:
+            pass
+    plot = live(["heatmap"])
+    monkeypatch.setattr(module, "threading", SimpleNamespace(Thread=IdleThread))
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: None)
+    plot.create_dash(plot.go_f, refresh_interval_ms=350)
+    callback = next(iter(plot._dash_app.callback_map.values()))["callback"].__wrapped__
+    plot.go_f.data[0].update(x=[0, 1], y=[0, 1], z=[[1, 2], [3, 4]])
+    result = callback(1, {"xaxis.range[0]": .2, "xaxis.range[1]": .8})
+    np.testing.assert_array_equal(result.data[0].z, [[1, 2], [3, 4]])
+    assert tuple(result.layout.xaxis.range) == (.2, .8)
+    assert plot._dash_app.layout.children[1].interval == 350
+    # A later external mutation remains visible without a managed-dirty flag.
+    plot.live_dfs[0][0][0].z = [[9, 2], [3, 4]]
+    assert callback(2, None).data[0].z[0][0] == 9
+
+
 @pytest.mark.parametrize("dtype", ["int64", "Int64", "string", "category"])
 def test_select_scan_accepts_nullable_direction_types(dtype: str) -> None:
     frame = pd.DataFrame({
@@ -308,6 +426,149 @@ def test_select_scan_explicit_time_unit_keeps_validation(values: list, message: 
         )
 
 
+def test_live_grid_batch_can_shrink_to_one_trace() -> None:
+    plot = live(["heatmap", "contour"])
+    first, second = GridData([0, 1], [0]), GridData([0, 1], [0])
+    first.update([0, 1], 0, [1, 2])
+    plot.live_plot_update((0, 0), (0, 1), (0, 0), [first, second])
+    second.update([0, 1], 0, [3, 4])
+    plot.live_plot_update((0,), (1,), (0,), second)
+    np.testing.assert_array_equal(plot.go_f.data[0].z, first.z)
+    np.testing.assert_array_equal(plot.go_f.data[1].z, second.z)
+
+
+@pytest.mark.parametrize("webgl", ["off", "on"])
+def test_single_line_wrappers_append_window_and_clear(webgl: str) -> None:
+    plot = live(["scatter"], webgl=webgl)
+    plot.live_plot_update((0,), (0,), (0,), [np.array([0, 1])], [[10, 11]])
+    plot.live_plot_update(0, 0, 0, 2, 12, incremental=True)
+    plot.live_plot_update((0,), (0,), (0,), [[3, 4]], [[13, 14]],
+                          incremental=True, max_points=3)
+    np.testing.assert_array_equal(plot.go_f.data[0].x, [2, 3, 4])
+    np.testing.assert_array_equal(plot.go_f.data[0].y, [12, 13, 14])
+    plot.live_plot_update(0, 0, 0, [], [])
+    assert len(plot.go_f.data[0].x) == 0
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize("with_str", [False, True])
+def test_line_missing_value_vectors_remain_valid(wrapped: bool, with_str: bool) -> None:
+    plot = live(["scatter"])
+    x, y = ([[0]], [[None]]) if wrapped else ([0], [None])
+    plot.live_plot_update((0,), (0,), (0,), x, y, with_str=with_str)
+    plot.live_plot_update(0, 0, 0, [1], [None], incremental=True, with_str=with_str)
+    np.testing.assert_array_equal(plot.go_f.data[0].x, [0, 1])
+    assert np.isnan(np.asarray(plot.go_f.data[0].y, dtype=float)).all()
+
+
+def candle_frame() -> pd.DataFrame:
+    return pd.DataFrame({
+        "time": pd.date_range("2026-01-01", periods=2),
+        "open": [2, 3], "high": [4, 5], "low": [1, 2], "close": [3, 4],
+    })
+
+
+def test_candlestick_replacement_and_wrappers_remain_compatible() -> None:
+    plot = live(["candlestick", "candlestick"])
+    frame = candle_frame()
+    plot.live_plot_update(0, 0, 0, frame)
+    plot.live_plot_update((0,), (0,), (0,), [frame], incremental=True)
+    assert len(plot.go_f.data[0].x) == len(frame)
+    plot.live_plot_update((0, 0), (0, 1), (0, 0), [[frame], [frame]])
+    for trace in plot.go_f.data:
+        np.testing.assert_array_equal(trace.close, frame.close)
+
+
+def test_mixed_grid_raw_map_line_and_candle_share_input_normalization() -> None:
+    plot = live(["scatter", "heatmap", "contour", "candlestick"])
+    grid = GridData([0, 1], [0])
+    grid.update([0, 1], 0, [5, 6])
+    matrix = np.arange(6).reshape(3, 2)
+    frame = candle_frame()
+    plot.live_plot_update(
+        (0, 0, 0, 0), (0, 1, 2, 3), (0, 0, 0, 0),
+        [[0, 1], grid, [0, 1], frame],
+        [[2, 3], None, [0, 1, 2], None], matrix,
+    )
+    np.testing.assert_array_equal(plot.go_f.data[0].y, [2, 3])
+    np.testing.assert_array_equal(plot.go_f.data[1].z, grid.z)
+    np.testing.assert_array_equal(plot.go_f.data[2].z, matrix)
+    np.testing.assert_array_equal(plot.go_f.data[3].close, frame.close)
+
+
+@pytest.fixture(params=[False, True], ids=["figure", "widget"])
+def metadata_plot(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[DataManipulator]:
+    monkeypatch.setattr(module, "is_notebook", lambda: True)
+    monkeypatch.setattr("IPython.display.display", lambda figure: None)
+    plot = DataManipulator(1)
+    plot.live_plot_init(1, 1, 1, plot_types=[["heatmap"]], show=request.param)
+    yield plot
+    if request.param:
+        plot.go_f.close()
+
+
+@pytest.mark.parametrize("replacement", ["grid", "raw"])
+def test_grid_axes_follow_data_replacement(
+    metadata_plot: DataManipulator, replacement: str,
+) -> None:
+    plot = metadata_plot
+    calibrated = GridData([0, 1], [0, 1], coordinates=np.meshgrid([10, 20], [30, 40]))
+    plot.live_plot_update(0, 0, 0, calibrated)
+    np.testing.assert_array_equal(plot.go_f.data[0].x, [10, 20])
+    np.testing.assert_array_equal(plot.go_f.data[0].y, [30, 40])
+    assert plot.go_f.data[0].customdata is None
+    next_grid = GridData([4, 5, 6], [7])
+    next_grid.update([4, 5, 6], 7, [8, 9, 10])
+    if replacement == "grid":
+        plot.live_plot_update(0, 0, 0, next_grid)
+    else:
+        plot.live_plot_update(0, 0, 0, next_grid.x, next_grid.y, next_grid.z)
+    assert plot.go_f.data[0].customdata is None
+    np.testing.assert_array_equal(plot.go_f.data[0].x, next_grid.x)
+    np.testing.assert_array_equal(plot.go_f.data[0].y, next_grid.y)
+    np.testing.assert_array_equal(plot.go_f.data[0].z, next_grid.z)
+    recalibrated = GridData([4, 5, 6], [7], coordinates=np.meshgrid([40, 50, 60], [70]))
+    plot.live_plot_update(0, 0, 0, recalibrated)
+    np.testing.assert_array_equal(plot.go_f.data[0].x, [40, 50, 60])
+    np.testing.assert_array_equal(plot.go_f.data[0].y, [70])
+    assert plot.go_f.data[0].customdata is None
+
+
+@pytest.mark.parametrize("after_calibration", [False, True])
+def test_grid_updates_preserve_caller_customdata(
+    metadata_plot: DataManipulator, after_calibration: bool,
+) -> None:
+    plot = metadata_plot
+    if after_calibration:
+        grid = GridData([0, 1], [0, 1], coordinates=np.meshgrid([10, 20], [30, 40]))
+        plot.live_plot_update(0, 0, 0, grid)
+    manual = np.array([["a", "b"], ["c", "d"]])
+    plot.go_f.data[0].customdata = manual
+    calibrated = GridData([0, 1], [0, 1], coordinates=np.meshgrid([10, 20], [30, 40]))
+    plot.live_plot_update(0, 0, 0, calibrated)
+    np.testing.assert_array_equal(plot.go_f.data[0].customdata, manual)
+    plot.live_plot_update(0, 0, 0, GridData([0, 1], [0, 1]))
+    np.testing.assert_array_equal(plot.go_f.data[0].customdata, manual)
+    plot.live_plot_update(0, 0, 0, [0, 1], [0, 1], np.ones((2, 2)))
+    np.testing.assert_array_equal(plot.go_f.data[0].customdata, manual)
+
+
+def test_failed_batch_preserves_calibrated_grid() -> None:
+    plot = live(["heatmap", "scatter"])
+    grid = GridData([0, 1], [0, 1], coordinates=np.meshgrid([10, 20], [30, 40]))
+    plot.live_plot_update(0, 0, 0, grid)
+    before = plot.go_f.to_json()
+    replacement = GridData([0, 1], [0, 1])
+    with pytest.raises(ValueError, match="line x/y lengths must match"):
+        plot.live_plot_update((0, 0), (0, 1), (0, 0), [replacement, [0, 1]], [None, [0]])
+    assert plot.go_f.to_json() == before
+    plot.live_plot_update(0, 0, 0, replacement)
+    np.testing.assert_array_equal(plot.go_f.data[0].x, replacement.x)
+    np.testing.assert_array_equal(plot.go_f.data[0].y, replacement.y)
+
+
 @pytest.mark.parametrize("render", ["pcolormesh", "contourf"])
 def test_dataframe_and_grid_mapping_share_orientation_and_renderer(render: str) -> None:
     frame = pd.DataFrame({"x": [10, 10, 20, 20], "y": [1, 2, 1, 2], "z": [3, 4, 5, 6]})
@@ -329,6 +590,177 @@ def test_dataframe_and_grid_mapping_share_orientation_and_renderer(render: str) 
                 assert ax.get_xlim() == (10, 20) and ax.get_ylim() == (1, 2)
         finally:
             plt.close(fig)
+
+
+@pytest.mark.parametrize("plot_type", ["heatmap", "contour"])
+@pytest.mark.parametrize("widget", [False, True])
+@pytest.mark.parametrize("descending", [False, True])
+def test_live_grid_uses_calibrated_axes(
+    monkeypatch: pytest.MonkeyPatch, plot_type: str, widget: bool, descending: bool,
+) -> None:
+    monkeypatch.setattr(module, "is_notebook", lambda: True)
+    monkeypatch.setattr("IPython.display.display", lambda figure: None)
+    plot = DataManipulator(1)
+    plot.live_plot_init(1, 1, 1, plot_types=[[plot_type]], show=widget)
+    calibrated_x = [30., 20., 10.] if descending else [10., 20., 30.]
+    calibrated_y = [50., 40.] if descending else [40., 50.]
+    grid = GridData([0, 1, 2], [0, 1],
+                    coordinates=np.meshgrid(calibrated_x, calibrated_y))
+    grid.update(1, 0, 7)
+    try:
+        plot.live_plot_update(0, 0, 0, grid)
+        trace = plot.go_f.data[0]
+        np.testing.assert_array_equal(trace.x, calibrated_x)
+        np.testing.assert_array_equal(trace.y, calibrated_y)
+        np.testing.assert_array_equal(np.asarray(trace.z, dtype=float), grid.z)
+        # Calibration affects plotting only, not how measurements find cells.
+        np.testing.assert_array_equal(grid.x, [0, 1, 2])
+        np.testing.assert_array_equal(grid.y, [0, 1])
+    finally:
+        if widget:
+            plot.go_f.close()
+
+
+@pytest.mark.parametrize("plot_type", ["heatmap", "contour"])
+@pytest.mark.parametrize("invalid", ["sheared_x", "sheared_y", "folded_x", "collapsed_y"])
+def test_live_grid_rejects_unrepresentable_calibration_atomically(
+    plot_type: str, invalid: str,
+) -> None:
+    plot = live(["scatter", plot_type])
+    calibrated = GridData([0, 1, 2], [0, 1],
+                          coordinates=np.meshgrid([10., 20., 30.], [40., 50.]))
+    plot.live_plot_update(0, 1, 0, calibrated)
+    before = plot.go_f.to_json()
+    x, y = (a.copy() for a in calibrated.mesh())
+    if invalid == "sheared_x":
+        x[1] += .2
+    elif invalid == "sheared_y":
+        y[:, 1] += .2
+    elif invalid == "folded_x":
+        x[:] = [10., 30., 20.]
+    else:
+        y[:] = 40.
+    invalid_grid = GridData([0, 1, 2], [0, 1], coordinates=(x, y))
+    with pytest.raises(ValueError, match="calibrated coordinates"):
+        plot.live_plot_update((0, 0), (0, 1), (0, 0),
+                              [[0, 1], invalid_grid], [[1, 2], None])
+    assert plot.go_f.to_json() == before
+    # A subsequent valid update must still replace the previous calibration.
+    plot.live_plot_update(0, 1, 0, GridData([0, 1, 2], [0, 1]))
+    np.testing.assert_array_equal(plot.go_f.data[1].x, [0, 1, 2])
+    np.testing.assert_array_equal(plot.go_f.data[1].y, [0, 1])
+
+
+@pytest.mark.parametrize("webgl", ["off", "on"])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_legacy_incremental_strings_work_without_with_str(webgl: str, wrapped: bool) -> None:
+    plot = live(["scatter"], webgl=webgl)
+    for i in range(3):
+        x, y = [f"2026-01-0{i + 1}"], [i]
+        if wrapped:
+            x, y = [x], [y]
+        plot.live_plot_update(0, 0, 0, x, y, incremental=True, max_points=2)
+    np.testing.assert_array_equal(plot.go_f.data[0].x, ["2026-01-02", "2026-01-03"])
+    np.testing.assert_array_equal(plot.go_f.data[0].y, [1, 2])
+
+
+def test_legacy_incremental_line_numeric_strings() -> None:
+    plot = live(["scatter"])
+    for value in ["1.5", "2.5"]:
+        plot.live_plot_update(0, 0, 0, [value], [value], incremental=True)
+    np.testing.assert_array_equal(plot.go_f.data[0].x, [1.5, 2.5])
+    np.testing.assert_array_equal(plot.go_f.data[0].y, [1.5, 2.5])
+    before = plot.go_f.to_json()
+    with pytest.raises(TypeError):
+        plot.live_plot_update(0, 0, 0, [object()], [1], incremental=True)
+    assert plot.go_f.to_json() == before
+
+
+@pytest.mark.parametrize("plot_type", ["heatmap", "contour"])
+@pytest.mark.parametrize("invalid", ["wrapped_z", "triplets", "scalar_z", "wrapped_axes", "edges"])
+def test_maps_reject_ambiguous_or_nonmatrix_inputs(plot_type: str, invalid: str) -> None:
+    plot = live(["scatter", plot_type])
+    x, y, z = [0, 1], [0, 1], np.ones((2, 2))
+    if invalid == "wrapped_z":
+        z = [z]
+    elif invalid == "triplets":
+        z = [1, 2]
+    elif invalid == "scalar_z":
+        x, y, z = [0], [0], 1
+    elif invalid == "wrapped_axes":
+        x = [x]
+    else:
+        x = [0, 1, 2]
+    before = plot.go_f.to_json()
+    with pytest.raises(ValueError, match="map"):
+        plot.live_plot_update((0, 0), (0, 1), (0, 0), [[0, 1], x], [[2, 3], y], z)
+    assert plot.go_f.to_json() == before
+
+
+@pytest.mark.parametrize("plot_type", ["heatmap", "contour"])
+@pytest.mark.parametrize("use_grid", [False, True])
+def test_maps_replace_data_with_fixed_orientation(plot_type: str, use_grid: bool) -> None:
+    plot = live([plot_type])
+    grid = GridData([0, 1, 2], [0, 1])
+    grid.update([0, 1, 2], 0, [1, 2, 3])
+    args = (grid,) if use_grid else (grid.x, grid.y, grid.z)
+    before = plot.go_f.to_json()
+    with pytest.raises(ValueError, match="incremental=False"):
+        plot.live_plot_update(0, 0, 0, *args, incremental=True)
+    assert plot.go_f.to_json() == before
+    plot.go_f.data[0].transpose = True
+    plot.live_plot_update(0, 0, 0, *args)
+    assert plot.go_f.data[0].transpose is False
+    np.testing.assert_array_equal(plot.go_f.data[0].z, grid.z)
+
+
+@pytest.mark.parametrize("webgl", ["off", "on"])
+@pytest.mark.parametrize("with_str", [False, True])
+@pytest.mark.parametrize("kind", ["date", "datetime", "timestamp", "numpy"])
+def test_incremental_line_date_coordinates(kind: str, with_str: bool, webgl: str) -> None:
+    plot = live(["scatter"], webgl=webgl)
+    expected = pd.date_range("2026-01-01", periods=3)
+    for i, timestamp in enumerate(expected):
+        value = {
+            "date": date(2026, 1, i + 1),
+            "datetime": datetime(2026, 1, i + 1),
+            "timestamp": timestamp,
+            "numpy": timestamp.to_datetime64(),
+        }[kind]
+        x = np.array([value]) if kind == "numpy" else [value]
+        plot.live_plot_update(0, 0, 0, x, [i], incremental=True,
+                              with_str=with_str, max_points=2)
+    np.testing.assert_array_equal(pd.to_datetime(plot.go_f.data[0].x), expected[1:])
+    np.testing.assert_array_equal(plot.go_f.data[0].y, [1, 2])
+    assert "2026-01-02" in plot.go_f.to_json()
+
+
+@pytest.mark.parametrize("numpy_first", [False, True])
+@pytest.mark.parametrize("with_str", [False, True])
+@pytest.mark.parametrize("object_array", [False, True])
+def test_incremental_lines_mix_date_representations_without_integer_timestamps(
+    numpy_first: bool, with_str: bool, object_array: bool,
+) -> None:
+    plot = live(["scatter"])
+    dates = pd.date_range("2026-01-01T00:00:00.000123", periods=2)
+    for i, timestamp in enumerate(dates):
+        use_numpy = (i == 0) == numpy_first
+        x = np.array([timestamp.to_datetime64()]) if use_numpy else [timestamp]
+        if use_numpy and object_array:
+            x = np.fromiter(x, dtype=object)
+        plot.live_plot_update(0, 0, 0, x, [i], incremental=True, with_str=with_str)
+    assert all(isinstance(value, (date, np.datetime64)) for value in plot.go_f.data[0].x)
+    np.testing.assert_array_equal(pd.to_datetime(plot.go_f.data[0].x), dates)
+    serialized = plot.go_f.to_json()
+    assert "2026-01-01T00:00:00.000123" in serialized
+    assert "2026-01-02T00:00:00.000123" in serialized
+
+
+def test_incremental_line_accepts_existing_numpy_date_trace() -> None:
+    plot = live(["scatter"])
+    plot.go_f.data[0].update(x=np.array(["2026-01-01"], dtype="datetime64[ns]"), y=[0])
+    plot.live_plot_update(0, 0, 0, [pd.Timestamp("2026-01-02")], [1], incremental=True)
+    assert all(isinstance(value, (date, np.datetime64)) for value in plot.go_f.data[0].x)
 
 
 @pytest.mark.parametrize("shape", [(1, 3), (2, 1), (1, 1)])
