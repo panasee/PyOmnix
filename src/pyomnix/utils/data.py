@@ -3,16 +3,256 @@ from __future__ import annotations
 import copy
 from collections.abc import Sequence
 from itertools import groupby
+from os import PathLike
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
 if TYPE_CHECKING:
     import pandas as pd
+    from numpy.typing import ArrayLike, NDArray
 
 from ..omnix_logger import get_logger
 
 logger = get_logger(__name__)
+
+
+class GridData:
+    """A fixed scan grid, with rows along y and columns along x.
+
+    Acquisition order is independent of grid order. Create a separate grid for
+    each run/branch. NaN means no displayed value; ``counts`` distinguishes an
+    unmeasured point from a measured NaN. ``valid`` marks planned scan points.
+    ``order`` records each cell's latest zero-based acquisition number; ``path``
+    retains every accepted visit as (ix, iy), in update input order.
+    Optional (X, Y) coordinate matrices describe calibrated plotting positions,
+    without changing the scan axes used to locate incoming measurements.
+    """
+
+    def __init__(
+        self,
+        x: ArrayLike,
+        y: ArrayLike,
+        *,
+        valid: ArrayLike | None = None,
+        coordinates: Sequence[ArrayLike] | NDArray | None = None,
+    ) -> None:
+        self.x, self.y = (self._axis(axis) for axis in (x, y))
+        self.shape = (len(self.y), len(self.x))
+        self.valid = (np.ones(self.shape, dtype=bool) if valid is None
+                      else np.array(valid, dtype=bool, copy=True))
+        if self.valid.shape != self.shape:
+            raise ValueError("valid must have shape (len(y), len(x))")
+        self.valid.setflags(write=False)
+        self.coordinates: tuple[NDArray[np.float64], ...] | None = None
+        if coordinates is not None:
+            if len(coordinates) != 2:
+                raise ValueError("coordinates must contain X and Y matrices")
+            arrays = tuple(np.array(a, dtype=float, copy=True) for a in coordinates)
+            if any(a.shape != self.shape or not np.isfinite(a).all() for a in arrays):
+                raise ValueError("X and Y must be finite matrices with the grid shape")
+            for a in arrays:
+                a.setflags(write=False)
+            self.coordinates = arrays
+        self._z = np.full(self.shape, np.nan)
+        self._counts = np.zeros(self.shape, dtype=np.int64)
+        self._order = np.full(self.shape, -1, dtype=np.int64)
+        self._path: list[tuple[int, int]] = []
+
+    @staticmethod
+    def _axis(values: ArrayLike) -> NDArray[np.float64]:
+        axis = np.array(values, dtype=float, copy=True)
+        if axis.ndim != 1 or not axis.size or not np.isfinite(axis).all():
+            raise ValueError("grid axes must be nonempty finite one-dimensional arrays")
+        if len(axis) > 1 and not (np.all(np.diff(axis) > 0) or np.all(np.diff(axis) < 0)):
+            raise ValueError("grid axes must be strictly monotonic and unique")
+        axis.setflags(write=False)
+        return axis
+
+    @property
+    def z(self) -> NDArray[np.float64]:
+        """Read-only view of displayed values; missing cells contain NaN."""
+        view = self._z.view()
+        view.setflags(write=False)
+        return view
+
+    @property
+    def counts(self) -> NDArray[np.int64]:
+        """Read-only view of measurement counts, including NaN readings."""
+        view = self._counts.view()
+        view.setflags(write=False)
+        return view
+
+    @property
+    def order(self) -> NDArray[np.int64]:
+        """Read-only latest acquisition numbers; unmeasured cells contain -1."""
+        view = self._order.view()
+        view.setflags(write=False)
+        return view
+
+    @property
+    def path(self) -> NDArray[np.int64]:
+        """Read-only (N, 2) snapshot of all accepted (ix, iy) visits.
+
+        Row numbers are zero-based acquisition numbers, including repeated cells
+        and NaN readings. Coordinates are grid indices, not calibrated positions.
+        This records input order, not timestamps or historical measurement values.
+        """
+        path = np.array(self._path, dtype=np.int64).reshape(-1, 2)
+        path.setflags(write=False)
+        return path
+
+    @property
+    def complete(self) -> bool:
+        """Whether every planned cell has received at least one reading."""
+        return bool(np.all(self._counts[self.valid] > 0))
+
+    @property
+    def coverage(self) -> float:
+        """Fraction of planned cells measured, including measured NaNs."""
+        total = np.count_nonzero(self.valid)
+        return np.count_nonzero(self._counts[self.valid]) / total if total else 1.0
+
+    def mesh(self) -> Sequence[NDArray[np.float64]]:
+        """Return X/Y plotting matrices, using calibrated coordinates if supplied."""
+        return self.coordinates if self.coordinates is not None else np.meshgrid(self.x, self.y)
+
+    def save(self, filename: str | PathLike[str]) -> None:
+        """Save the complete grid state as a compressed, pickle-free NPZ archive.
+
+        The exact filename is used (no extension is appended). An existing file
+        is overwritten; its parent directory must exist. Historical visits are
+        included, but historical values and timestamps are not stored by GridData.
+        """
+        arrays = dict(format_version=np.array(1, dtype=np.int64), x=self.x, y=self.y,
+                      valid=self.valid, z=self._z, counts=self._counts,
+                      order=self._order, path=self.path)
+        if self.coordinates is not None:
+            arrays["X"], arrays["Y"] = self.coordinates
+        with open(filename, "wb") as archive:
+            np.savez_compressed(archive, **arrays)
+
+    @classmethod
+    def load(cls, filename: str | PathLike[str]) -> GridData:
+        """Load and validate a saved grid, preserving numbering for later updates.
+
+        Missing fields, unsupported versions and inconsistent state raise errors;
+        no values, counts or acquisition numbers are inferred or repaired.
+        """
+        archive = np.load(filename, allow_pickle=False)
+        if not isinstance(archive, np.lib.npyio.NpzFile):
+            raise ValueError("GridData requires an NPZ archive")
+        with archive:
+            required = {"format_version", "x", "y", "valid", "z", "counts", "order", "path"}
+            fields = set(archive.files)
+            if fields != required and fields != required | {"X", "Y"}:
+                raise ValueError("invalid GridData archive fields")
+            version = archive["format_version"]
+            if version.shape != () or version.dtype.kind != "i" or version.item() != 1:
+                raise ValueError("unsupported GridData format_version")
+            data = {name: archive[name] for name in fields - {"format_version"}}
+
+        for name in ("x", "y", "z", "X", "Y"):
+            if name in data and data[name].dtype.kind not in "fiu":
+                raise ValueError(f"{name} must contain real numeric data")
+        if data["valid"].dtype.kind != "b":
+            raise ValueError("valid must contain booleans")
+        grid = cls(data["x"], data["y"], valid=data["valid"],
+                   coordinates=(data["X"], data["Y"]) if "X" in data else None)
+        z, counts, order, path = (data[name] for name in ("z", "counts", "order", "path"))
+        if any(a.shape != grid.shape for a in (z, counts, order)):
+            raise ValueError("z, counts and order must have the grid shape")
+        if any(a.dtype.kind != "i" for a in (counts, order, path)):
+            raise ValueError("counts, order and path must contain signed integers")
+        if path.ndim != 2 or path.shape[1] != 2:
+            raise ValueError("path must have shape (N, 2)")
+        if (np.any(path < 0) or np.any(path[:, 0] >= grid.shape[1])
+                or np.any(path[:, 1] >= grid.shape[0])):
+            raise ValueError("path indices must be within the grid")
+        ix, iy = path[:, 0], path[:, 1]
+        if not grid.valid[iy, ix].all():
+            raise ValueError("path targets a cell excluded by valid")
+        expected_counts = np.zeros(grid.shape, dtype=np.int64)
+        expected_order = np.full(grid.shape, -1, dtype=np.int64)
+        np.add.at(expected_counts, (iy, ix), 1)
+        np.maximum.at(expected_order, (iy, ix), np.arange(len(path), dtype=np.int64))
+        if not np.array_equal(counts, expected_counts) or not np.array_equal(order, expected_order):
+            raise ValueError("counts or order is inconsistent with path")
+        if np.isinf(z).any() or not np.isnan(z[counts == 0]).all():
+            raise ValueError("z must not contain infinity or values in unmeasured cells")
+        grid._z = np.array(z, dtype=float, copy=True)
+        grid._counts = np.array(counts, dtype=np.int64, copy=True)
+        grid._order = np.array(order, dtype=np.int64, copy=True)
+        grid._path = [tuple(point) for point in path.tolist()]
+        return grid
+
+    @staticmethod
+    def _locate(
+        axis: NDArray[np.float64], values: NDArray[np.float64], tolerance: float,
+    ) -> NDArray[np.intp]:
+        # Negating both arrays makes a descending axis searchable in ascending
+        # order without changing its original cell indices.
+        ascending = axis if axis[-1] >= axis[0] else -axis
+        query = values if axis[-1] >= axis[0] else -values
+        low = np.searchsorted(ascending, query - tolerance, side="left")
+        high = np.searchsorted(ascending, query + tolerance, side="right")
+        # The closed tolerance interval must contain exactly one axis value:
+        # zero matches is outside the grid; multiple matches is ambiguous.
+        if np.any(high - low != 1):
+            raise ValueError(
+                "coordinate is outside the grid or matches multiple cells within tolerance"
+            )
+        return low
+
+    def update(
+        self,
+        x: ArrayLike,
+        y: ArrayLike,
+        values: ArrayLike,
+        *,
+        indices: bool = False,
+        tolerance: float = 0,
+        overwrite: bool = False,
+    ) -> None:
+        """Write a point or broadcastable batch, validating the entire batch first.
+
+        With indices=True, x/y are zero-based column/row indices. Repeated cells
+        raise unless overwrite=True; then the last input wins and counts still
+        includes every reading. No averaging, interpolation or clipping occurs.
+        Acquisition numbers follow call order, then C-order flattening of each
+        broadcast batch. Failed validation and empty batches consume no numbers.
+        """
+        if not np.isfinite(tolerance) or tolerance < 0 or (indices and tolerance != 0):
+            raise ValueError("tolerance must be finite, nonnegative, and zero for indices")
+        x, y, values = np.broadcast_arrays(np.asarray(x, dtype=float),
+                                          np.asarray(y, dtype=float),
+                                          np.asarray(values, dtype=float))
+        x, y, values = (a.ravel() for a in (x, y, values))
+        if not np.isfinite(x).all() or not np.isfinite(y).all() or np.isinf(values).any():
+            raise ValueError("coordinates must be finite; values may contain NaN but not infinity")
+        if indices:
+            if (np.any(x != np.floor(x)) or np.any(y != np.floor(y))
+                    or np.any((x < 0) | (x >= self.shape[1]))
+                    or np.any((y < 0) | (y >= self.shape[0]))):
+                raise ValueError("grid indices must be integers within the grid")
+            ix, iy = x.astype(int), y.astype(int)
+        else:
+            ix = self._locate(self.x, x, tolerance)
+            iy = self._locate(self.y, y, tolerance)
+        if not self.valid[iy, ix].all():
+            raise ValueError("measurement targets a cell excluded by valid")
+        # Flatten only for identifying repeated cells; Z remains a y-by-x matrix.
+        flat = iy * self.shape[1] + ix
+        if not overwrite and (len(np.unique(flat)) != len(flat) or np.any(self._counts[iy, ix])):
+            raise ValueError("duplicate grid cell; select a run/branch or explicitly overwrite")
+        # Explicitly choose the last occurrence, including duplicates in a batch.
+        _, reverse_index = np.unique(flat[::-1], return_index=True)
+        last = len(flat) - 1 - reverse_index
+        start = len(self._path)
+        self._z[iy[last], ix[last]] = values[last]
+        self._order[iy[last], ix[last]] = start + last
+        np.add.at(self._counts, (iy, ix), 1)
+        self._path.extend(zip(ix.tolist(), iy.tolist()))
 
 
 class ObjectArray:

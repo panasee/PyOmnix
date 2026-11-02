@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Literal, TYPE_CHECKING, Any
@@ -31,15 +31,17 @@ if TYPE_CHECKING:
     import pandas as pd
     import plotly.graph_objects as go
     from matplotlib.axes import Axes
-    from matplotlib.colors import Colormap
+    from matplotlib.colors import Colormap, Normalize
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
+    from numpy.typing import ArrayLike, NDArray
 
 from ..omnix_logger import get_logger
 from ..utils import (
     CM_TO_INCH,
     ObjectArray,
+    GridData,
     PlotParam,
     get_unit_factor_and_texname,
     hex_to_rgb,
@@ -369,11 +371,49 @@ class DataManipulator:
             lines.extend(ax.plot(frame[x], frame[y], color=cmap(norm(value)), **plot_kwargs))
         return fig, ax, lines, colorbar
 
+    def mapping_grid(
+        self,
+        mapping_x: Hashable,
+        mapping_y: Hashable,
+        mapping_val: Hashable,
+        *,
+        data_df: pd.DataFrame | None = None,
+        loc: tuple[int, ...] | int | None = None,
+        label: str | None = None,
+        x_values: ArrayLike | None = None,
+        y_values: ArrayLike | None = None,
+        valid: ArrayLike | None = None,
+        coordinates: Sequence[ArrayLike] | NDArray | None = None,
+        indices: bool = False,
+        tolerance: float = 0,
+        overwrite: bool = False,
+    ) -> GridData:
+        """Reconstruct one selected run/branch with the same rules as live grids.
+
+        Grid rows follow y, columns follow x. Supply axes to preserve unmeasured
+        rows/columns. Index columns require explicit axes. Duplicate coordinates
+        raise unless overwrite is requested; select branches before calling.
+        """
+        import numpy as np
+
+        if data_df is None:
+            data_df = self.get_datas(loc=loc, label=label, concat=True)
+        if indices and (x_values is None or y_values is None):
+            raise ValueError("index columns require x_values and y_values")
+        grid = GridData(
+            np.unique(data_df[mapping_x]) if x_values is None else x_values,
+            np.unique(data_df[mapping_y]) if y_values is None else y_values,
+            valid=valid, coordinates=coordinates,
+        )
+        grid.update(data_df[mapping_x], data_df[mapping_y], data_df[mapping_val],
+                    indices=indices, tolerance=tolerance, overwrite=overwrite)
+        return grid
+
     def plot_mapping(
         self,
-        mapping_x: Any,
-        mapping_y: Any,
-        mapping_val: Any,
+        mapping_x: Any = None,
+        mapping_y: Any = None,
+        mapping_val: Any = None,
         *,
         data_df: pd.DataFrame | None = None,
         loc: tuple[int, ...] | int | None = None,
@@ -381,6 +421,9 @@ class DataManipulator:
         fig: Figure | None = None,
         ax: Axes | None = None,
         cmap: str | Colormap = "viridis",
+        grid: GridData | None = None,
+        norm: Normalize | str | None = None,
+        render: Literal["contourf", "pcolormesh"] = "pcolormesh",
     ) -> tuple[Figure, Axes]:
         """
         plot the mapping of the data (x,y, and value(z))
@@ -393,18 +436,41 @@ class DataManipulator:
         - fig: the figure to plot the figure
         - ax: the axes to plot the figure
         - cmap: the colormap to use
+        - grid: an existing GridData, instead of dataframe selectors; uses its
+          calibrated coordinates and defaults to pcolormesh without filling holes
+        - norm: a Matplotlib normalization instance or scale name; an instance
+          can be shared between panels
+        - render: contourf or pcolormesh; defaults to pcolormesh
+
+        Dataframes are reconstructed through mapping_grid: rows follow Y and
+        columns follow X, with the same orientation as an existing GridData.
+        pcolormesh requires at least two centers along each axis to infer cell
+        edges; singleton rows/columns raise instead of drawing zero-area cells.
         """
         import numpy as np
-        if data_df is None:
-            data_df = self.get_datas(loc=loc, label=label, concat=True)
-
-        grid_df = data_df.pivot(index=mapping_x, columns=mapping_y, values=mapping_val)
-        x_arr, y_arr = np.meshgrid(grid_df.columns, grid_df.index)
+        if grid is not None:
+            selectors = (mapping_x, mapping_y, mapping_val, data_df, loc, label)
+            if any(arg is not None for arg in selectors):
+                raise ValueError("provide grid or dataframe selectors, not both")
+        else:
+            grid = self.mapping_grid(mapping_x, mapping_y, mapping_val,
+                                     data_df=data_df, loc=loc, label=label)
+        x_arr, y_arr = grid.mesh()
+        grid_df = np.ma.masked_invalid(grid.z)
+        if render not in {"contourf", "pcolormesh"}:
+            raise ValueError("render must be contourf or pcolormesh")
+        if render == "pcolormesh" and min(grid_df.shape) < 2:
+            raise ValueError(
+                "pcolormesh requires at least two grid centers per axis to infer cell edges"
+            )
 
         if fig is None or ax is None:
             fig, ax, _ = DataManipulator.init_canvas(1, 1, 10, 8)
 
-        contour = ax.contourf(x_arr, y_arr, grid_df, cmap=cmap)
+        if render == "pcolormesh":
+            contour = ax.pcolormesh(x_arr, y_arr, grid_df, cmap=cmap, norm=norm, shading="auto")
+        else:
+            contour = ax.contourf(x_arr, y_arr, grid_df, cmap=cmap, norm=norm)
         fig.colorbar(contour)
         return fig, ax
 
