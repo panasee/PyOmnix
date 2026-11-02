@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyomnix"
-version = "0.2"
+version = "1.0"
 description = "Integrated Tools for Scientific Computing, Data Analysis, and AI Development"
 authors = [
     {name = "Dongkai", email = "dongkai001@e.ntu.edu.sg"}
