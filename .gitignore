@@ -168,3 +168,4 @@ tests/*.ipynb
 
 # ignore analysis outputs
 analysis_outputs/
+output/
