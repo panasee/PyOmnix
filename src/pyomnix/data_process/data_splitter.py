@@ -17,8 +17,9 @@ Design notes:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from dataclasses import dataclass
+from typing import Literal, TypedDict
 
 import numpy as np
 import pandas as pd
@@ -43,6 +44,23 @@ class SweepSegment:
     direction: str
 
 
+class ScanMetadata(TypedDict):
+    """Description of the acquired path returned by ``select_scan``.
+
+    ``requested`` is the target parameter, or None when selecting by scan ID.
+    ``actual`` is the scan mean; ``minimum``/``maximum`` describe its drift.
+    ``directions`` retains first-seen label order; ``segments`` counts plot runs.
+    """
+
+    scan_id: Hashable
+    requested: float | None
+    actual: float
+    minimum: float
+    maximum: float
+    directions: tuple[Hashable, ...]
+    segments: int
+
+
 class DataSplitter:
     """Detect and split multiple field sweeps in tabular datasets.
 
@@ -51,6 +69,86 @@ class DataSplitter:
         segments = splitter.detect_sweep_segments(df, field_col="B", min_points=10)
         split_dfs = splitter.split_dataframe_by_segments(df, segments)
     """
+
+    @staticmethod
+    def select_scan(
+        df: pd.DataFrame,
+        parameter: Hashable,
+        target: float | None = None,
+        *,
+        scan_col: Hashable = "scan_id",
+        scan_id: Hashable | None = None,
+        direction_col: Hashable | None = "direction",
+        time_col: Hashable | None = None,
+        max_gap: float | None = None,
+        segment_col: Hashable = "_plot_segment",
+        time_unit: Literal["D", "h", "m", "s", "ms", "us", "ns"] | None = None,
+    ) -> tuple[pd.DataFrame, ScanMetadata]:
+        """Select an actual acquired scan, without interpolation or relabeling direction.
+
+        Select by ID or the nearest scan-mean parameter (ties and out-of-range
+        requests raise). Return (copied rows, metadata). Plot segments split at
+        direction changes and optional time gaps; input order/index are retained.
+        Parameter min/max describe drift along the selected physical path.
+
+        ``max_gap`` is in seconds. For a numeric time column, pass its unit
+        explicitly, e.g. ``time_unit="s"`` for elapsed seconds. The default
+        preserves pandas datetime parsing, including nanoseconds for numeric
+        values; no unit is inferred from column names or magnitudes. A supplied
+        time_unit requires a numeric column. Metadata remains a plain dict.
+        """
+        if (target is None) == (scan_id is None):
+            raise ValueError("provide either target or scan_id")
+        if segment_col in df:
+            raise ValueError(f"{segment_col} already exists")
+        if df.empty or df[scan_col].isna().any():
+            raise ValueError("scan data must be nonempty and scan IDs must not be missing")
+        values = df[parameter].to_numpy(dtype=float)
+        if not np.isfinite(values).all():
+            raise ValueError("scan parameter must be finite")
+        means = df[parameter].groupby(df[scan_col], sort=False, observed=True).mean()
+        if target is not None:
+            if not np.isfinite(target) or not means.min() <= target <= means.max():
+                raise ValueError("target is outside the measured scan-mean range")
+            distances = (means - target).abs()
+            matches = distances.index[np.isclose(distances, distances.min(), rtol=1e-12, atol=0)]
+            if len(matches) != 1:
+                raise ValueError("multiple scans are equally close; select scan_id explicitly")
+            scan_id = matches[0]
+        elif scan_id not in means.index:
+            raise ValueError("scan_id is not present")
+        selected = df.loc[df[scan_col] == scan_id].copy()
+        breaks = np.zeros(len(selected), dtype=bool)
+        directions: tuple[Hashable, ...] = ()
+        if direction_col is not None:
+            if selected[direction_col].isna().any():
+                raise ValueError("direction labels must not be missing")
+            # shift() creates a missing first comparison for nullable dtypes.
+            # Compare only subsequent rows; the first row starts a segment below.
+            changes = selected[direction_col].ne(selected[direction_col].shift())
+            breaks[1:] = changes.iloc[1:].to_numpy(dtype=bool)
+            directions = tuple(selected[direction_col].unique())
+        if max_gap is not None:
+            if time_col is None or not np.isfinite(max_gap) or max_gap <= 0:
+                raise ValueError(
+                    "max_gap requires time_col and a positive finite seconds threshold"
+                )
+            if time_unit is not None and not pd.api.types.is_numeric_dtype(selected[time_col]):
+                raise ValueError("time_unit requires a numeric time column")
+            times = pd.to_datetime(selected[time_col], unit=time_unit, errors="raise")
+            if times.isna().any():
+                raise ValueError("timestamps must not be missing")
+            gaps = times.diff().dt.total_seconds().to_numpy()
+            if np.any(gaps[1:] < 0):
+                raise ValueError("timestamps must follow acquisition order")
+            breaks |= gaps > max_gap
+        breaks[0] = True
+        selected[segment_col] = np.cumsum(breaks) - 1
+        return selected, dict(scan_id=scan_id, requested=target,
+                              actual=float(means.at[scan_id]),
+                              minimum=float(selected[parameter].min()),
+                              maximum=float(selected[parameter].max()),
+                              directions=directions, segments=int(breaks.sum()))
 
     def detect_sweep_segments(
         self,

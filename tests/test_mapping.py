@@ -226,6 +226,88 @@ def test_static_grid_uses_calibrated_coordinates_and_shared_norm() -> None:
     plt.close(fig)
 
 
+def test_select_scan_retains_order_and_breaks_at_directions_and_gaps() -> None:
+    frame = pd.DataFrame(dict(scan_id=[0]*4 + [1]*2, n=[1, 1.1, .9, 1, 3, 3],
+                              direction=[1, 1, -1, -1, 1, -1],
+                              time=pd.to_datetime([0, 1, 2, 100, 101, 102], unit="s")))
+    selected, meta = DataSplitter.select_scan(frame, "n", 1.1, time_col="time", max_gap=10)
+    assert list(selected.index) == [0, 1, 2, 3]
+    assert list(selected._plot_segment) == [0, 0, 1, 2]
+    assert meta["minimum"] == .9 and meta["maximum"] == 1.1
+    assert meta["directions"] == (1, -1)
+    with pytest.raises(ValueError, match="equally"):
+        DataSplitter.select_scan(frame, "n", 2)
+    with pytest.raises(ValueError, match="outside"):
+        DataSplitter.select_scan(frame, "n", 4)
+    assert "_plot_segment" not in frame
+
+
+@pytest.mark.parametrize("dtype", ["int64", "Int64", "string", "category"])
+def test_select_scan_accepts_nullable_direction_types(dtype: str) -> None:
+    frame = pd.DataFrame({
+        "scan_id": [0, 0, 0], "n": [1.0, 1.0, 1.0],
+        "direction": pd.Series([1, 1, -1], dtype=dtype),
+    })
+    frame.index = [7, 3, 9]
+    original = frame.copy(deep=True)
+    selected, metadata = DataSplitter.select_scan(frame, "n", scan_id=0)
+    assert selected._plot_segment.tolist() == [0, 0, 1]
+    assert selected.index.tolist() == frame.index.tolist()
+    assert metadata["directions"] == tuple(frame.direction.unique())
+    pd.testing.assert_frame_equal(frame, original)
+
+
+@pytest.mark.parametrize("dtype", ["Int64", "string"])
+def test_select_scan_still_rejects_missing_direction(dtype: str) -> None:
+    frame = pd.DataFrame({
+        "scan_id": [0, 0], "n": [1.0, 1.0],
+        "direction": pd.Series([1, None], dtype=dtype),
+    })
+    with pytest.raises(ValueError, match="direction labels must not be missing"):
+        DataSplitter.select_scan(frame, "n", scan_id=0)
+
+
+@pytest.mark.parametrize("unit,scale", [("s", 1), ("ms", 1000), ("us", 10**6), ("ns", 10**9)])
+def test_select_scan_explicit_numeric_time_units(unit: str, scale: int) -> None:
+    frame = pd.DataFrame({
+        "scan_id": [0, 0, 0], "n": [1.0, 1.0, 1.0], "direction": [1, 1, 1],
+        "time": np.array([0, 1, 100], dtype=float) * scale,
+    })
+    selected, _ = DataSplitter.select_scan(
+        frame, "n", scan_id=0, time_col="time", max_gap=10, time_unit=unit,
+    )
+    assert selected._plot_segment.tolist() == [0, 0, 1]
+
+
+@pytest.mark.parametrize("time_kind", ["datetime", "string", "numeric_ns"])
+def test_select_scan_preserves_legacy_time_parsing(time_kind: str) -> None:
+    timestamps = pd.to_datetime([0, 1, 100], unit="s")
+    values = {
+        "datetime": timestamps,
+        "string": timestamps.astype(str),
+        "numeric_ns": np.array([0, 1, 100], dtype=np.int64) * 10**9,
+    }[time_kind]
+    frame = pd.DataFrame({"scan_id": [0, 0, 0], "n": [1.0]*3, "time": values})
+    selected, _ = DataSplitter.select_scan(
+        frame, "n", scan_id=0, direction_col=None, time_col="time", max_gap=10,
+    )
+    assert selected._plot_segment.tolist() == [0, 0, 1]
+
+
+@pytest.mark.parametrize("values,message", [
+    ([0, 100, 1], "acquisition order"),
+    ([0, np.nan, 100], "timestamps must not be missing"),
+    (["2026-01-01", "2026-01-02", "2026-01-03"], "numeric time column"),
+])
+def test_select_scan_explicit_time_unit_keeps_validation(values: list, message: str) -> None:
+    frame = pd.DataFrame({"scan_id": [0, 0, 0], "n": [1.0]*3, "time": values})
+    with pytest.raises(ValueError, match=message):
+        DataSplitter.select_scan(
+            frame, "n", scan_id=0, direction_col=None,
+            time_col="time", max_gap=10, time_unit="s",
+        )
+
+
 @pytest.mark.parametrize("render", ["pcolormesh", "contourf"])
 def test_dataframe_and_grid_mapping_share_orientation_and_renderer(render: str) -> None:
     frame = pd.DataFrame({"x": [10, 10, 20, 20], "y": [1, 2, 1, 2], "z": [3, 4, 5, 6]})
@@ -270,3 +352,25 @@ def test_static_singleton_grid_rejected_before_plot_mutation(
             assert not ax.collections and len(fig.axes) == 1
     finally:
         plt.close(fig)
+
+
+@pytest.mark.parametrize("selection", [{"scan_id": ("run", 0)}, {"target": 1.1}])
+@pytest.mark.parametrize("tuple_columns", [False, True])
+def test_select_scan_supports_tuple_ids_and_columns(selection: dict, tuple_columns: bool) -> None:
+    parameter = ("gate", "V") if tuple_columns else "n"
+    scan_col = ("acquisition", "scan") if tuple_columns else "scan_id"
+    frame = pd.DataFrame({
+        scan_col: [("run", 0), ("run", 0), ("run", 1), ("run", 1)],
+        parameter: [1.0, 1.2, 2.0, 2.2],
+    }, index=[7, 3, 9, 1])
+    original = frame.copy(deep=True)
+    selected, metadata = DataSplitter.select_scan(
+        frame, parameter, scan_col=scan_col, direction_col=None, **selection,
+    )
+    assert selected.index.tolist() == [7, 3]
+    assert selected[scan_col].tolist() == [("run", 0), ("run", 0)]
+    assert metadata["scan_id"] == ("run", 0)
+    assert metadata["actual"] == pytest.approx(1.1)
+    assert metadata["minimum"] == 1.0 and metadata["maximum"] == 1.2
+    assert selected["_plot_segment"].tolist() == [0, 0]
+    pd.testing.assert_frame_equal(frame, original)
