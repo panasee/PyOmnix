@@ -104,6 +104,7 @@ class TestLogger(unittest.TestCase):
         logger = setup_logger(
             name=logger_name,
             log_level=LoggerConfig.TRACE,
+            file_level=None,
             log_file=self.log_file_path
         )
         
@@ -160,7 +161,7 @@ class TestLogger(unittest.TestCase):
     def test_custom_excepthook(self):
         """Test custom_excepthook function"""
         # Setup a logger with a file to capture the exception
-        logger_name = "ExcepthookTest"
+        logger_name = LoggerConfig.DEFAULT_NAME
         setup_logger(
             name=logger_name,
             log_file=self.log_file_path
@@ -183,7 +184,7 @@ class TestLogger(unittest.TestCase):
         
         # Check that the exception was logged
         log_contents = self.read_log_file(self.log_file_path)
-        self.assertTrue(any("KeyError: Test exception for excepthook" in line for line in log_contents))
+        self.assertTrue(any("KeyError: 'Test exception for excepthook'" in line for line in log_contents))
 
     def test_close_logger(self):
         """Test close_logger function"""
@@ -272,4 +273,4 @@ if __name__ == "__main__":
     unittest.main(argv=['first-arg-is-ignored'], exit=False)
     
     # Run manual tests with visual output
-    run_manual_tests() 
+    run_manual_tests()

@@ -43,7 +43,7 @@ class TestPlottingCanvas(unittest.TestCase):
         plt.close(fig)
 
     def test_init_subcanvas_supports_per_subplot_projection_kwargs(self) -> None:
-        fig, axes, params = DataManipulator.init_subcanvas(
+        fig, axes, params = DataManipulator.init_subcanvases(
             1,
             2,
             10,
